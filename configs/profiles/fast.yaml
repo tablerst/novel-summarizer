@@ -1,0 +1,11 @@
+llm:
+  chat_model: "deepseek-v3.2"
+  temperature: 0.2
+  max_concurrency: 10
+
+summarize:
+  chapter_summary_words: [120, 300]
+  book_summary_words: [600, 1000]
+  story_words: [900, 1600]
+  with_citations:
+    enabled: false

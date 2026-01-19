@@ -1,0 +1,43 @@
+[project]
+name = "novel-summarizer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiofile>=3.9.0",
+    "aiosqlite>=0.22.1",
+    "cashew>=0.4.1",
+    "httpx[http2]>=0.28.1",
+    "lancedb>=0.26.1",
+    "langchain>=1.2.4",
+    "langchain-community>=0.4.1",
+    "langchain-openai>=1.1.7",
+    "langgraph>=1.0.6",
+    "loguru>=0.7.3",
+    "mcp>=1.25.0",
+    "orjson>=3.11.5",
+    "pandas>=2.3.3",
+    "pydantic>=2.12.5",
+    "pytest>=8.3.0",
+    "pyyaml>=6.0.2",
+    "rich>=14.2.0",
+    "sqlalchemy[aiosqlite]>=2.0.45",
+]
+
+[project.scripts]
+novel-summarizer = "novel_summarizer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["novel_summarizer*"]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

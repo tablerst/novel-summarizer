@@ -1,0 +1,44 @@
+app:
+  data_dir: "./data"
+  output_dir: "./output"
+  log_level: "INFO"
+
+ingest:
+  encoding: "utf-8"
+  chapter_regex: "^第[0-9一二三四五六七八九十百千]+章.*$"
+  cleanup:
+    strip_blank_lines: true
+    normalize_fullwidth: true
+
+split:
+  chunk_size_tokens: 1200
+  chunk_overlap_tokens: 120
+  min_chunk_tokens: 200
+
+llm:
+  provider: "openai"
+  chat_model: "deepseek-v3.2"
+  embedding_model: "text-embedding-3-large"
+  temperature: 0.1
+  timeout_s: 60
+  max_concurrency: 6
+  retries: 3
+
+summarize:
+  language: "zh"
+  style: "清晰、克制、不剧透关键反转（可配置）"
+  chapter_summary_words: [200, 500]
+  book_summary_words: [800, 1500]
+  include_quotes: false
+  with_citations:
+    enabled: true
+    top_k: 6
+
+storage:
+  sqlite_path: "./data/novel.db"
+  lancedb_dir: "./data/lancedb"
+
+cache:
+  enabled: true
+  backend: "sqlite"
+  ttl_seconds: 2592000
