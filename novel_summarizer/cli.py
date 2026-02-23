@@ -16,6 +16,7 @@ from novel_summarizer.config.loader import masked_env_snapshot
 from novel_summarizer.embeddings.service import embed_book_chunks
 from novel_summarizer.export.markdown import export_book_markdown
 from novel_summarizer.ingest.service import ingest_book
+from novel_summarizer.storyteller.service import storytell_book
 from novel_summarizer.summarize.service import summarize_book
 from novel_summarizer.storage.db import init_db_service, shutdown_db_service
 from novel_summarizer.utils.logging import setup_logging
@@ -44,6 +45,11 @@ def _build_parser() -> argparse.ArgumentParser:
     summarize_parser.add_argument("--book-id", type=int, required=True, help="Book id to summarize")
     summarize_parser.add_argument("--no-export", action="store_true", help="Skip markdown export")
 
+    storytell_parser = subparsers.add_parser("storytell", help="Run chapter-by-chapter storyteller rewrite")
+    storytell_parser.add_argument("--book-id", type=int, required=True, help="Book id to process")
+    storytell_parser.add_argument("--from-chapter", type=int, default=None, help="Start chapter idx (inclusive)")
+    storytell_parser.add_argument("--to-chapter", type=int, default=None, help="End chapter idx (inclusive)")
+
     export_parser = subparsers.add_parser("export", help="Export markdown outputs from stored summaries")
     export_parser.add_argument("--book-id", type=int, required=True, help="Book id to export")
 
@@ -69,7 +75,7 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _print_config(config) -> None:
-    env_snapshot = masked_env_snapshot()
+    env_snapshot = masked_env_snapshot(config)
     console.print(Panel(Pretty(config.model_dump(mode="json")), title="Effective Config"))
     console.print(Panel(Pretty(env_snapshot), title="Env Snapshot"))
 
@@ -83,7 +89,6 @@ async def _main_async() -> None:
         config_path=args.config,
         profile=args.profile,
         overrides=overrides,
-        require_api_key=args.command not in {"config", "ingest"},
     )
 
     setup_logging(config.app.log_level)
@@ -136,6 +141,23 @@ async def _main_async() -> None:
                         title="Export",
                     )
                 )
+            return
+
+        if args.command == "storytell":
+            stats = await storytell_book(
+                book_id=args.book_id,
+                config=config,
+                from_chapter=args.from_chapter,
+                to_chapter=args.to_chapter,
+            )
+            table = Table(title="Storytell Summary", show_header=True, header_style="bold")
+            table.add_column("Metric")
+            table.add_column("Value")
+            table.add_row("Book ID", str(stats.book_id))
+            table.add_row("Chapters total", str(stats.chapters_total))
+            table.add_row("Chapters processed", str(stats.chapters_processed))
+            table.add_row("Chapters skipped", str(stats.chapters_skipped))
+            console.print(table)
             return
 
         if args.command == "export":

@@ -1,7 +1,17 @@
 llm:
-  chat_model: "deepseek-v3.2"
-  temperature: 0.35
-  max_concurrency: 4
+  chat_endpoints:
+    summarize_default:
+      model: "deepseek-v3.2"
+      temperature: 0.35
+      max_concurrency: 4
+    storyteller_default:
+      model: "deepseek-v3.2"
+      temperature: 0.5
+      max_concurrency: 4
+  embedding_endpoints:
+    embedding_default:
+      model: "text-embedding-3-large"
+      max_concurrency: 4
 
 summarize:
   style: "说书人风格，叙事连贯，保留主线与关键转折、人物动机和势力关系，细节适度但不流水账"
@@ -12,3 +22,9 @@ summarize:
   with_citations:
     enabled: true
     top_k: 8
+
+storyteller:
+  style: "说书人风格，强叙事张力，强调人物博弈、关键对白与伏笔回收"
+  narration_ratio: [0.45, 0.55]
+  narration_temperature: 0.5
+  memory_top_k: 10

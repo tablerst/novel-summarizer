@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import time
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Literal, TypeVar
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -19,24 +20,67 @@ class LLMResponse:
     cached: bool
 
 
+@dataclass(frozen=True)
+class ResolvedChatRuntime:
+    route: str
+    endpoint_name: str
+    provider_name: str
+    model: str
+    temperature: float
+    timeout_s: int
+    max_concurrency: int
+    retries: int
+    base_url: str | None
+    api_key_env: str | None
+    api_key: str | None
+
+
 T = TypeVar("T")
 
 
-def _build_chat_model(config: AppConfigRoot) -> ChatOpenAI:
+def resolve_chat_runtime(config: AppConfigRoot, route: Literal["summarize", "storyteller"]) -> ResolvedChatRuntime:
+    endpoint_name, endpoint, provider = config.llm.resolve_chat_route(route)
+    api_key = None
+    if provider.api_key_env:
+        api_key = os.getenv(provider.api_key_env)
+        if not api_key:
+            raise ValueError(
+                f"Missing required API key env for route '{route}': {provider.api_key_env}"
+            )
+
+    return ResolvedChatRuntime(
+        route=route,
+        endpoint_name=endpoint_name,
+        provider_name=endpoint.provider,
+        model=endpoint.model,
+        temperature=endpoint.temperature,
+        timeout_s=endpoint.timeout_s,
+        max_concurrency=endpoint.max_concurrency,
+        retries=endpoint.retries,
+        base_url=provider.base_url,
+        api_key_env=provider.api_key_env,
+        api_key=api_key,
+    )
+
+
+def _build_chat_model(runtime: ResolvedChatRuntime) -> ChatOpenAI:
     kwargs: dict[str, Any] = {
-        "model": config.llm.chat_model,
-        "temperature": config.llm.temperature,
-        "timeout": config.llm.timeout_s,
-        "max_retries": config.llm.retries,
+        "model": runtime.model,
+        "temperature": runtime.temperature,
+        "timeout": runtime.timeout_s,
+        "max_retries": runtime.retries,
     }
 
-    if config.llm.base_url:
-        kwargs["base_url"] = config.llm.base_url
+    if runtime.base_url:
+        kwargs["base_url"] = runtime.base_url
+    if runtime.api_key:
+        kwargs["api_key"] = runtime.api_key
 
     try:
         return ChatOpenAI(**kwargs)
     except TypeError:
         kwargs.pop("base_url", None)
+        kwargs.pop("api_key", None)
         return ChatOpenAI(**kwargs)
 
 
@@ -46,10 +90,12 @@ def make_cache_key(*parts: str) -> str:
 
 
 class OpenAIChatClient:
-    def __init__(self, config: AppConfigRoot, cache: SimpleCache):
+    def __init__(self, config: AppConfigRoot, cache: SimpleCache, route: Literal["summarize", "storyteller"] = "summarize"):
         self.config = config
         self.cache = cache
-        self.model = _build_chat_model(config)
+        self.runtime = resolve_chat_runtime(config, route)
+        self.model = _build_chat_model(self.runtime)
+        self.model_identifier = f"{self.runtime.provider_name}/{self.runtime.endpoint_name}/{self.runtime.model}"
 
     def complete(self, system_prompt: str, user_prompt: str, cache_key: str) -> LLMResponse:
         cached = self.cache.get(cache_key)
@@ -86,7 +132,7 @@ class OpenAIChatClient:
         user_prompt: str,
         parser: Callable[[str], T] | None = None,
     ) -> tuple[str, T] | str:
-        attempts = max(1, self.config.llm.retries + 1)
+        attempts = max(1, self.runtime.retries + 1)
         last_exc: Exception | None = None
         for attempt in range(attempts):
             try:

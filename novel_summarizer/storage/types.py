@@ -25,6 +25,19 @@ class ChunkRow:
 
 
 @dataclass
+class NarrationRow:
+    id: int
+    book_id: int
+    chapter_id: int
+    chapter_idx: int
+    narration_text: str
+    key_events_json: str | None
+    prompt_version: str
+    model: str
+    input_hash: str
+
+
+@dataclass
 class SummaryRow:
     id: int
     scope: str
@@ -43,3 +56,42 @@ class BookRow:
     author: str | None
     book_hash: str
     source_path: str | None
+
+
+@dataclass
+class CharacterRow:
+    id: int
+    book_id: int
+    canonical_name: str
+    aliases_json: str
+    first_chapter_idx: int | None
+    last_chapter_idx: int | None
+    status: str
+    location: str | None
+    abilities_json: str | None
+    relationships_json: str | None
+    motivation: str | None
+    notes: str | None
+
+
+@dataclass
+class ItemRow:
+    id: int
+    book_id: int
+    name: str
+    owner_name: str | None
+    first_chapter_idx: int | None
+    last_chapter_idx: int | None
+    description: str | None
+    status: str
+
+
+@dataclass
+class PlotEventRow:
+    id: int
+    book_id: int
+    chapter_idx: int
+    event_summary: str
+    involved_characters_json: str | None
+    event_type: str | None
+    impact: str | None

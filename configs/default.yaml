@@ -16,13 +16,44 @@ split:
   min_chunk_tokens: 200
 
 llm:
-  provider: "openai"
-  chat_model: "deepseek-v3.2"
-  embedding_model: "text-embedding-3-large"
-  temperature: 0.1
-  timeout_s: 60
-  max_concurrency: 6
-  retries: 3
+  providers:
+    deepseek:
+      kind: "openai_compatible"
+      base_url: "https://api.deepseek.com/v1"
+      api_key_env: "DEEPSEEK_API_KEY"
+    local_embedding:
+      kind: "openai_compatible"
+      base_url: "http://127.0.0.1:8000/v1"
+      api_key_env: null
+
+  chat_endpoints:
+    summarize_default:
+      provider: "deepseek"
+      model: "deepseek-v3.2"
+      temperature: 0.1
+      timeout_s: 60
+      max_concurrency: 6
+      retries: 3
+    storyteller_default:
+      provider: "deepseek"
+      model: "deepseek-v3.2"
+      temperature: 0.45
+      timeout_s: 60
+      max_concurrency: 4
+      retries: 3
+
+  embedding_endpoints:
+    embedding_default:
+      provider: "deepseek"
+      model: "text-embedding-3-large"
+      timeout_s: 60
+      max_concurrency: 6
+      retries: 3
+
+  routes:
+    summarize_chat: "summarize_default"
+    storyteller_chat: "storyteller_default"
+    embedding: "embedding_default"
 
 summarize:
   language: "zh"
@@ -33,6 +64,18 @@ summarize:
   with_citations:
     enabled: true
     top_k: 6
+
+storyteller:
+  language: "zh"
+  style: "说书人/评书艺人风格，沉浸感强，保留关键对白和心理博弈"
+  narration_ratio: [0.4, 0.5]
+  narration_temperature: 0.45
+  entity_temperature: 0.1
+  state_temperature: 0.1
+  memory_top_k: 8
+  recent_events_window: 5
+  include_key_dialogue: true
+  include_inner_thoughts: true
 
 storage:
   sqlite_path: "./data/novel.db"

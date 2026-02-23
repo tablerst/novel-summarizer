@@ -1,7 +1,17 @@
 llm:
-  chat_model: "deepseek-v3.2"
-  temperature: 0.2
-  max_concurrency: 10
+  chat_endpoints:
+    summarize_default:
+      model: "deepseek-v3.2"
+      temperature: 0.2
+      max_concurrency: 10
+    storyteller_default:
+      model: "deepseek-v3.2"
+      temperature: 0.35
+      max_concurrency: 8
+  embedding_endpoints:
+    embedding_default:
+      model: "text-embedding-3-large"
+      max_concurrency: 10
 
 summarize:
   chapter_summary_words: [120, 300]
@@ -9,3 +19,8 @@ summarize:
   story_words: [900, 1600]
   with_citations:
     enabled: false
+
+storyteller:
+  narration_ratio: [0.35, 0.45]
+  narration_temperature: 0.35
+  memory_top_k: 4

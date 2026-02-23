@@ -25,3 +25,8 @@ class Book(Base):
         back_populates="book",
         cascade="all, delete-orphan",
     )
+    narrations: Mapped[list["Narration"]] = relationship(
+        "Narration",
+        back_populates="book",
+        cascade="all, delete-orphan",
+    )

@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from novel_summarizer.config.loader import load_config
-from novel_summarizer.config.schema import AppConfigRoot, LLMConfig, SplitConfig, resolve_paths
+from novel_summarizer.config.schema import AppConfigRoot, ChatEndpointConfig, LLMConfig, SplitConfig, resolve_paths
 
 
 def test_resolve_paths_makes_absolute(tmp_path: Path) -> None:
@@ -33,9 +33,52 @@ def test_split_config_validates_overlap_and_positive() -> None:
         SplitConfig(chunk_size_tokens=10, chunk_overlap_tokens=10, min_chunk_tokens=1)
 
 
-def test_llm_config_validates_temperature() -> None:
+def test_chat_endpoint_validates_temperature() -> None:
     with pytest.raises(ValidationError):
-        LLMConfig(temperature=2.5)
+        ChatEndpointConfig(provider="p", model="m", temperature=2.5)
+
+
+def test_llm_config_validates_endpoint_provider_reference() -> None:
+    with pytest.raises(ValidationError):
+        LLMConfig.model_validate(
+            {
+                "providers": {
+                    "p1": {"kind": "openai_compatible", "base_url": "https://x", "api_key_env": "KEY"},
+                },
+                "chat_endpoints": {
+                    "summarize_default": {
+                        "provider": "missing_provider",
+                        "model": "m",
+                        "temperature": 0.3,
+                        "timeout_s": 60,
+                        "max_concurrency": 6,
+                        "retries": 3,
+                    },
+                    "storyteller_default": {
+                        "provider": "p1",
+                        "model": "m",
+                        "temperature": 0.4,
+                        "timeout_s": 60,
+                        "max_concurrency": 4,
+                        "retries": 3,
+                    },
+                },
+                "embedding_endpoints": {
+                    "embedding_default": {
+                        "provider": "p1",
+                        "model": "e",
+                        "timeout_s": 60,
+                        "max_concurrency": 6,
+                        "retries": 3,
+                    }
+                },
+                "routes": {
+                    "summarize_chat": "summarize_default",
+                    "storyteller_chat": "storyteller_default",
+                    "embedding": "embedding_default",
+                },
+            }
+        )
 
 
 def test_load_config_merge_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,7 +93,37 @@ def test_load_config_merge_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
               data_dir: "./data-default"
               output_dir: "./out-default"
             llm:
-              chat_model: "gpt-default"
+                            providers:
+                                openai:
+                                    kind: "openai_compatible"
+                                    base_url: "https://default-llm.example/v1"
+                                    api_key_env: "OPENAI_API_KEY"
+                            chat_endpoints:
+                                summarize_default:
+                                    provider: "openai"
+                                    model: "gpt-default"
+                                    temperature: 0.3
+                                    timeout_s: 60
+                                    max_concurrency: 6
+                                    retries: 3
+                                storyteller_default:
+                                    provider: "openai"
+                                    model: "gpt-story"
+                                    temperature: 0.4
+                                    timeout_s: 60
+                                    max_concurrency: 4
+                                    retries: 3
+                            embedding_endpoints:
+                                embedding_default:
+                                    provider: "openai"
+                                    model: "embed-default"
+                                    timeout_s: 60
+                                    max_concurrency: 6
+                                    retries: 3
+                            routes:
+                                summarize_chat: "summarize_default"
+                                storyteller_chat: "storyteller_default"
+                                embedding: "embedding_default"
             """
         ).strip(),
         encoding="utf-8",
@@ -62,7 +135,9 @@ def test_load_config_merge_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             app:
               output_dir: "./out-profile"
             llm:
-              chat_model: "gpt-profile"
+                            chat_endpoints:
+                                summarize_default:
+                                    model: "gpt-profile"
             """
         ).strip(),
         encoding="utf-8",
@@ -79,16 +154,16 @@ def test_load_config_merge_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("NOVEL_SUMMARIZER_DATA_DIR", str(tmp_path / "env-data"))
+    monkeypatch.setenv("NOVEL_SUMMARIZER_LLM_PROVIDER_OPENAI_BASE_URL", "https://env-llm.example/v1")
 
     config = load_config(
         config_path=configs_dir / "custom.yaml",
         profile="fast",
         overrides={"app": {"output_dir": "./out-override"}},
-        require_api_key=True,
     )
 
     assert config.app.data_dir == (tmp_path / "env-data").resolve()
     assert config.app.output_dir == (tmp_path / "out-override").resolve()
-    assert config.llm.chat_model == "gpt-profile"
+    assert config.llm.chat_endpoints["summarize_default"].model == "gpt-profile"
+    assert config.llm.providers["openai"].base_url == "https://env-llm.example/v1"

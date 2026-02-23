@@ -159,10 +159,10 @@ def _chunk_summary(
     user = user.format(chunk=chunk_text)
     cache_key = make_cache_key(
         "chunk",
-        config.llm.chat_model,
+        client.model_identifier,
         CHUNK_PROMPT_VERSION,
         input_hash,
-        str(config.llm.temperature),
+        str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
     logger.debug("Chunk summary cached=%s", response.cached)
@@ -188,10 +188,10 @@ def _chapter_summary(
     user = user.format(chunk_summaries=chunk_json)
     cache_key = make_cache_key(
         "chapter",
-        config.llm.chat_model,
+        client.model_identifier,
         CHAPTER_PROMPT_VERSION,
         input_hash,
-        str(config.llm.temperature),
+        str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
     logger.debug("Chapter summary cached=%s", response.cached)
@@ -217,10 +217,10 @@ def _book_summary(
     user = user.format(chapter_summaries=chapter_json)
     cache_key = make_cache_key(
         "book",
-        config.llm.chat_model,
+        client.model_identifier,
         BOOK_PROMPT_VERSION,
         input_hash,
-        str(config.llm.temperature),
+        str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
     logger.debug("Book summary cached=%s", response.cached)
@@ -248,10 +248,10 @@ def _story_summary(
     user = user.format(chapter_summaries=chapter_json)
     cache_key = make_cache_key(
         "story",
-        config.llm.chat_model,
+        client.model_identifier,
         STORY_PROMPT_VERSION,
         input_hash,
-        str(config.llm.temperature),
+        str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
     logger.debug("Story summary cached=%s", response.cached)
@@ -260,7 +260,7 @@ def _story_summary(
 
 async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
     cache = SimpleCache(config.cache.enabled, config.cache.backend, config.app.data_dir, config.cache.ttl_seconds)
-    client = OpenAIChatClient(config, cache)
+    client = OpenAIChatClient(config, cache, route="summarize")
 
     if config.summarize.with_citations.enabled:
         await embed_book_chunks(book_id=book_id, config=config)
@@ -288,7 +288,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                     ref_id=chunk.id,
                     summary_type="chunk_summary",
                     prompt_version=CHUNK_PROMPT_VERSION,
-                    model=config.llm.chat_model,
+                    model=client.model_identifier,
                     input_hash=chunk.chunk_hash,
                 )
                 if existing:
@@ -306,7 +306,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                     ref_id=chunk.id,
                     summary_type="chunk_summary",
                     prompt_version=CHUNK_PROMPT_VERSION,
-                    model=config.llm.chat_model,
+                    model=client.model_identifier,
                     input_hash=chunk.chunk_hash,
                     content=_dump_json(summary_obj),
                 )
@@ -319,7 +319,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                 ref_id=chapter.id,
                 summary_type="chapter_summary",
                 prompt_version=CHAPTER_PROMPT_VERSION,
-                model=config.llm.chat_model,
+                model=client.model_identifier,
                 input_hash=chapter_input_hash,
             )
             if existing_chapter:
@@ -349,7 +349,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                     ref_id=chapter.id,
                     summary_type="chapter_summary",
                     prompt_version=CHAPTER_PROMPT_VERSION,
-                    model=config.llm.chat_model,
+                    model=client.model_identifier,
                     input_hash=chapter_input_hash,
                     content=_dump_json(chapter_summary_obj),
                 )
@@ -378,7 +378,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                 ref_id=book_id,
                 summary_type="book_summary",
                 prompt_version=BOOK_PROMPT_VERSION,
-                model=config.llm.chat_model,
+                model=client.model_identifier,
                 input_hash=book_input_hash,
             )
             has_characters = await repo.get_summary(
@@ -386,7 +386,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                 ref_id=book_id,
                 summary_type="characters",
                 prompt_version=BOOK_PROMPT_VERSION,
-                model=config.llm.chat_model,
+                model=client.model_identifier,
                 input_hash=book_input_hash,
             )
             has_timeline = await repo.get_summary(
@@ -394,7 +394,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                 ref_id=book_id,
                 summary_type="timeline",
                 prompt_version=BOOK_PROMPT_VERSION,
-                model=config.llm.chat_model,
+                model=client.model_identifier,
                 input_hash=book_input_hash,
             )
             has_story = None
@@ -405,7 +405,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                     ref_id=book_id,
                     summary_type="story",
                     prompt_version=STORY_PROMPT_VERSION,
-                    model=config.llm.chat_model,
+                    model=client.model_identifier,
                     input_hash=book_input_hash,
                 )
 
@@ -442,7 +442,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                         ref_id=book_id,
                         summary_type="book_summary",
                         prompt_version=BOOK_PROMPT_VERSION,
-                        model=config.llm.chat_model,
+                        model=client.model_identifier,
                         input_hash=book_input_hash,
                         content=_dump_json(book_payload),
                     )
@@ -451,7 +451,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                         ref_id=book_id,
                         summary_type="characters",
                         prompt_version=BOOK_PROMPT_VERSION,
-                        model=config.llm.chat_model,
+                        model=client.model_identifier,
                         input_hash=book_input_hash,
                         content=_dump_json(characters_payload),
                     )
@@ -460,7 +460,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                         ref_id=book_id,
                         summary_type="timeline",
                         prompt_version=BOOK_PROMPT_VERSION,
-                        model=config.llm.chat_model,
+                        model=client.model_identifier,
                         input_hash=book_input_hash,
                         content=_dump_json(timeline_payload),
                     )
@@ -481,7 +481,7 @@ async def summarize_book(book_id: int, config: AppConfigRoot) -> SummarizeStats:
                         ref_id=book_id,
                         summary_type="story",
                         prompt_version=STORY_PROMPT_VERSION,
-                        model=config.llm.chat_model,
+                        model=client.model_identifier,
                         input_hash=book_input_hash,
                         content=_dump_json(dict(story_obj)),
                     )

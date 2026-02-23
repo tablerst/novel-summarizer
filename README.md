@@ -1,83 +1,142 @@
 ## novel-summarizer
 
-一个面向长篇文本的分层总结 CLI 工具。当前版本已完成 M0–M4：配置加载、章节解析与分块、分层总结、Markdown 导出与引用回溯（向量检索）。
+> **说书人风格小说解说稿生成器** — 把长篇小说逐章"重新讲一遍"，而不是压缩成干巴巴的摘要。
+
+通过 **SQLite 世界观状态** + **LanceDB 语义记忆** + **LangGraph 逐章工作流**，生成篇幅约为原著 40%–50% 的深度解说稿，保留核心情节、人物博弈和关键对白。
 
 ### 快速开始
 
-1. 准备环境变量
+#### 1. 安装依赖
 
-- 在项目根目录填好 `.env` 的 `OPENAI_API_KEY`。
+```bash
+uv sync
+```
 
-2. 查看生效配置
+#### 2. 配置环境变量
+
+在项目根目录创建 `.env`，填入：
+
+```
+DEEPSEEK_API_KEY=sk-...
+
+# 可选：覆盖 default.yaml 中某个 provider 的 base_url
+NOVEL_SUMMARIZER_LLM_PROVIDER_DEEPSEEK_BASE_URL=https://...
+```
+
+#### 3. 查看生效配置
 
 ```bash
 novel-summarizer config
+novel-summarizer --profile fast config    # 查看 fast profile
 ```
 
-3. 选择 profile
-
-```bash
-novel-summarizer --profile fast config
-```
-
-4. 导入文本（M1）
+#### 4. 导入小说
 
 ```bash
 novel-summarizer ingest --input path/to/novel.txt --title "书名" --author "作者"
 ```
 
-5. 生成摘要（M2/M3，默认导出）
+自动识别章节结构，分块并写入 SQLite。可通过 `--chapter-regex` 自定义章节正则。
+
+#### 5. 生成说书稿（核心）
 
 ```bash
-novel-summarizer summarize --book-id 1
+# 全书逐章生成
+novel-summarizer storytell --book-id 1
+
+# 只处理第 50–100 章（断点续跑 / 调试）
+novel-summarizer storytell --book-id 1 --from-chapter 50 --to-chapter 100
 ```
 
-6. 仅导出 Markdown（可选）
+每处理一章，系统会：
+1. 抽取本章出场实体（NER）
+2. 查询 SQLite 获取当前世界观状态
+3. 从 LanceDB 检索与本章相关的前情记忆
+4. 注入三层上下文，生成说书稿
+5. 更新世界观状态（人物/道具/事件）
+6. 将说书稿向量归档，供后续章节检索
+
+#### 6. 导出 Markdown
 
 ```bash
 novel-summarizer export --book-id 1
 ```
 
-7. 构建向量索引（M4，可选）
+#### 7. 一键运行（导入 + 说书 + 导出）
 
 ```bash
-novel-summarizer embed --book-id 1
+novel-summarizer run --input path/to/novel.txt --title "书名"
+```
+
+### 输出产物
+
+```
+output/<book_hash>/
+  chapters/
+    001_第一章_标题.md          # 逐章说书稿
+    002_第二章_标题.md
+    ...
+  full_story.md                # 全部章节说书稿合并
+  characters.md                # 主要人物表（姓名/别名/关系/状态轨迹）
+  timeline.md                  # 关键事件时间线
+  world_state.json             # 最终世界观状态快照
 ```
 
 ### 配置说明
 
-- 默认配置位于 `configs/default.yaml`
-- 可选 profile 位于 `configs/profiles/`
-- 默认输出目录：`./output`（可通过 `app.output_dir` 或 CLI `--output-dir` 覆盖）
-- SQLite 数据库默认路径：`./data/novel.db`
-- LanceDB 向量库目录：`./data/lancedb`
-- chunk/章节摘要会写入 `summaries` 表
-- 全书摘要/人物表/时间线/说书稿会写入 `summaries` 表（scope=book）并导出到 `./output/<book_hash>/`
-- `summarize.with_citations.enabled=true` 时会自动构建向量索引并注入证据片段
-- 向量库访问改用 `langchain_community.vectorstores.LanceDB`
-- 说书稿可通过 `summarize.story_words` 启用并控制字数范围
+| 配置文件 | 用途 |
+|---------|------|
+| `configs/default.yaml` | 框架默认值 |
+| `configs/profiles/fast.yaml` | 快速模式（更小模型、更低精度） |
+| `configs/profiles/quality.yaml` | 高质量模式（更强模型、更高精度） |
 
-### 数据库与事务（SQLAlchemy）
+关键配置段：
 
-- 当前数据库层已基于 **SQLAlchemy Async** 重构。
-- 应用启动时会初始化数据库连接，并自动检查/创建表结构。
-- 业务层通过 `session_scope()` 获取事务能力（异常自动回滚）。
+- `llm.providers.*` — 提供方连接配置（base_url、api_key_env）
+- `llm.chat_endpoints.*` — Chat 端点（模型、温度、超时、重试、并发）
+- `llm.embedding_endpoints.*` — Embedding 端点（模型、超时、重试、并发）
+- `llm.routes.*` — 业务路由到端点的映射（summarize/storyteller/embedding）
+- `storyteller.*` — 风格、篇幅比例、记忆检索条目数、生成温度
+- `storage.*` — SQLite / LanceDB 路径
+- `ingest.*` — 章节正则、清洗规则、分块参数
 
-### 存储层代码结构
+环境变量用于密钥和可选 provider 级 base_url 覆盖（例如 `DEEPSEEK_API_KEY`、`NOVEL_SUMMARIZER_LLM_PROVIDER_DEEPSEEK_BASE_URL`）。
 
-- 每个表一个子包：`storage/<table>/base.py` 放模型定义，`storage/<table>/crud.py` 放 CRUD 方法。
-- 兼容入口：`storage/repo.py` 仍提供聚合式仓储（内部委托到各表 CRUD）。
+### 技术栈
 
-### 输出产物
+- **Python 3.12+**、包管理 **uv**
+- **LangGraph** — 逐章工作流编排
+- **LangChain + langchain-openai** — LLM 调用（OpenAI 兼容 API）
+- **SQLite + SQLAlchemy Async** — 世界观状态 + 产物归档
+- **LanceDB** — 向量语义记忆
+- **Pydantic** — 配置校验
+- **Rich** — CLI 进度展示
 
-- `./output/<book_hash>/book_summary.md`
-- `./output/<book_hash>/characters.md`
-- `./output/<book_hash>/timeline.md`
-- `./output/<book_hash>/story.md`
-- SQLite：`books/chapters/chunks/summaries`
+### 架构概览
+
+```
+CLI → LangGraph 逐章循环 → 每章 6 节点有向图
+                              ├── 1. 实体抽取（NER）
+                              ├── 2. 世界观查询（SQLite）
+                              ├── 3. 记忆唤醒（LanceDB）
+                              ├── 4. 说书稿生成（LLM）
+                              ├── 5. 世界观更新（SQLite）
+                              └── 6. 记忆归档（LanceDB）
+```
+
+详见 [PLAN.md](PLAN.md) 了解完整架构设计。
+
+### 开发
+
+```bash
+uv sync                        # 安装依赖
+uv run pytest                  # 运行测试
+uv run python -m black .       # 格式化（line length 120）
+uv run python -m ruff check .  # Lint 检查
+```
 
 ### 说明
 
-- 当前仅支持 OpenAI 作为 LLM 提供方。
-- 引用功能由 `summarize.with_citations` 控制，启用后会使用 LanceDB 检索证据片段。
-- `summarize` 默认导出 Markdown，如需仅生成摘要可加 `--no-export`。
+- 当前仅支持 OpenAI 兼容 API 作为 LLM 提供方。
+- 所有 LLM 调用结果按 `(prompt_version, model, input_hash)` 缓存，幂等可恢复。
+- v1（Map-Reduce 分层压缩）代码保留在 `summarize/` 模块中作为 legacy 参考。

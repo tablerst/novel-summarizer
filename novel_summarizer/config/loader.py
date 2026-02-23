@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import os
+import re
 
 import yaml
 from loguru import logger
@@ -41,11 +42,20 @@ def _load_dotenv(dotenv_path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
+def _provider_base_url_override_var(provider_name: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]", "_", provider_name).upper()
+    return f"NOVEL_SUMMARIZER_LLM_PROVIDER_{normalized}_BASE_URL"
+
+
 def _apply_env(config_data: dict[str, Any]) -> dict[str, Any]:
     llm = config_data.setdefault("llm", {})
-    base_url = os.getenv("OPENAI_BASE_URL")
-    if base_url:
-        llm["base_url"] = base_url
+    providers = llm.setdefault("providers", {})
+    for provider_name, provider_cfg in providers.items():
+        if not isinstance(provider_cfg, dict):
+            continue
+        base_url_override = os.getenv(_provider_base_url_override_var(provider_name))
+        if base_url_override:
+            provider_cfg["base_url"] = base_url_override
 
     data_dir = os.getenv("NOVEL_SUMMARIZER_DATA_DIR")
     if data_dir:
@@ -58,7 +68,6 @@ def load_config(
     config_path: Path | None = None,
     profile: str | None = None,
     overrides: dict[str, Any] | None = None,
-    require_api_key: bool = True,
 ) -> AppConfigRoot:
     base_dir = Path.cwd()
     _load_dotenv(base_dir / ".env")
@@ -81,19 +90,24 @@ def load_config(
     config = AppConfigRoot.model_validate(config_data)
     config = resolve_paths(config, base_dir)
 
-    if require_api_key and not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("Missing OPENAI_API_KEY in environment or .env file")
-
     logger.debug("Loaded config from %s", base_dir)
     return config
 
 
-def masked_env_snapshot() -> dict[str, str | None]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    base_url = os.getenv("OPENAI_BASE_URL")
+def masked_env_snapshot(config: AppConfigRoot | None = None) -> dict[str, str | None]:
+    snapshot: dict[str, str | None] = {}
     data_dir = os.getenv("NOVEL_SUMMARIZER_DATA_DIR")
-    return {
-        "OPENAI_API_KEY": "***" if api_key else None,
-        "OPENAI_BASE_URL": base_url,
-        "NOVEL_SUMMARIZER_DATA_DIR": data_dir,
-    }
+    snapshot["NOVEL_SUMMARIZER_DATA_DIR"] = data_dir
+
+    if config is None:
+        return snapshot
+
+    for provider_name, provider in config.llm.providers.items():
+        override_var = _provider_base_url_override_var(provider_name)
+        snapshot[override_var] = os.getenv(override_var)
+        snapshot[f"llm.providers.{provider_name}.base_url"] = provider.base_url
+
+        if provider.api_key_env:
+            snapshot[provider.api_key_env] = "***" if os.getenv(provider.api_key_env) else None
+
+    return snapshot
