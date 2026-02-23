@@ -6,9 +6,11 @@ from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.llm.factory import OpenAIChatClient
 from novel_summarizer.storyteller.nodes import (
     consistency_check,
+    evidence_verify,
     entity_extract,
     memory_commit,
     memory_retrieve,
+    refine_narration,
     state_lookup,
     state_update,
     storyteller_generate,
@@ -24,6 +26,7 @@ def build_storyteller_graph(
     book_id: int,
     entity_llm_client: OpenAIChatClient | None = None,
     narration_llm_client: OpenAIChatClient | None = None,
+    refine_llm_client: OpenAIChatClient | None = None,
 ):
     workflow = StateGraph(StorytellerState)
 
@@ -42,6 +45,12 @@ def build_storyteller_graph(
     async def _consistency_check(state: StorytellerState) -> dict:
         return await consistency_check.run(state, config=config)
 
+    async def _evidence_verify(state: StorytellerState) -> dict:
+        return await evidence_verify.run(state, config=config)
+
+    async def _refine_narration(state: StorytellerState) -> dict:
+        return await refine_narration.run(state, config=config, llm_client=refine_llm_client)
+
     async def _state_update(state: StorytellerState) -> dict:
         return await state_update.run(state, repo=repo, config=config, book_id=book_id)
 
@@ -53,6 +62,8 @@ def build_storyteller_graph(
     workflow.add_node("memory_retrieve", _memory_retrieve)
     workflow.add_node("storyteller_generate", _storyteller_generate)
     workflow.add_node("consistency_check", _consistency_check)
+    workflow.add_node("evidence_verify", _evidence_verify)
+    workflow.add_node("refine_narration", _refine_narration)
     workflow.add_node("state_update", _state_update)
     workflow.add_node("memory_commit", _memory_commit)
 
@@ -61,7 +72,9 @@ def build_storyteller_graph(
     workflow.add_edge("state_lookup", "memory_retrieve")
     workflow.add_edge("memory_retrieve", "storyteller_generate")
     workflow.add_edge("storyteller_generate", "consistency_check")
-    workflow.add_edge("consistency_check", "state_update")
+    workflow.add_edge("consistency_check", "evidence_verify")
+    workflow.add_edge("evidence_verify", "refine_narration")
+    workflow.add_edge("refine_narration", "state_update")
     workflow.add_edge("state_update", "memory_commit")
     workflow.add_edge("memory_commit", END)
 

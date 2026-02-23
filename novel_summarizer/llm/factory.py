@@ -40,7 +40,7 @@ T = TypeVar("T")
 
 def resolve_chat_runtime(
     config: AppConfigRoot,
-    route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration"],
+    route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration", "storyteller_refine"],
 ) -> ResolvedChatRuntime:
     endpoint_name, endpoint, provider = config.llm.resolve_chat_route(route)
     api_key = None
@@ -97,7 +97,13 @@ class OpenAIChatClient:
         self,
         config: AppConfigRoot,
         cache: SimpleCache,
-        route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration"] = "summarize",
+        route: Literal[
+            "summarize",
+            "storyteller",
+            "storyteller_entity",
+            "storyteller_narration",
+            "storyteller_refine",
+        ] = "summarize",
     ):
         self.config = config
         self.cache = cache

@@ -55,6 +55,7 @@ llm:
     storyteller_chat: "storyteller_default"
     storyteller_entity_chat: "storyteller_default"
     storyteller_narration_chat: "storyteller_default"
+    storyteller_refine_chat: "storyteller_default"
     embedding: "embedding_default"
 
 summarize:
@@ -78,6 +79,10 @@ storyteller:
   recent_events_window: 5
   include_key_dialogue: true
   include_inner_thoughts: true
+  refine_enabled: true
+  refine_temperature: 0.35
+  evidence_min_support_score: 0.18
+  evidence_max_snippets: 3
 
 storage:
   sqlite_path: "./data/novel.db"

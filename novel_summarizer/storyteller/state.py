@@ -29,14 +29,19 @@ class StorytellerState(TypedDict):
     new_items: NotRequired[list[dict]]
     consistency_warnings: NotRequired[list[str]]
     consistency_actions: NotRequired[list[str]]
+    evidence_report: NotRequired[dict]
 
     # Runtime report metrics
     entity_llm_calls: NotRequired[int]
     entity_llm_cache_hit: NotRequired[bool]
     narration_llm_calls: NotRequired[int]
     narration_llm_cache_hit: NotRequired[bool]
+    refine_llm_calls: NotRequired[int]
+    refine_llm_cache_hit: NotRequired[bool]
     input_tokens_estimated: NotRequired[int]
     output_tokens_estimated: NotRequired[int]
+    refine_input_tokens_estimated: NotRequired[int]
+    refine_output_tokens_estimated: NotRequired[int]
 
     mutations_applied: NotRequired[dict]
     memory_committed: NotRequired[bool]

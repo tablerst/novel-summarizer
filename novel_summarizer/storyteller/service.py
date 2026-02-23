@@ -27,12 +27,17 @@ class StorytellStats:
     chapters_processed: int
     chapters_skipped: int
     llm_calls_estimated: int
+    refine_llm_calls_estimated: int
     llm_cache_hits: int
     llm_cache_misses: int
     input_tokens_estimated: int
     output_tokens_estimated: int
+    refine_input_tokens_estimated: int
+    refine_output_tokens_estimated: int
     consistency_warnings: int
     consistency_actions: int
+    evidence_supported_claims: int
+    evidence_unsupported_claims: int
     runtime_seconds: float
 
 
@@ -66,15 +71,21 @@ async def storytell_book(
     chapters_processed = 0
     chapters_skipped = 0
     llm_calls_estimated = 0
+    refine_llm_calls_estimated = 0
     llm_cache_hits = 0
     input_tokens_estimated = 0
     output_tokens_estimated = 0
+    refine_input_tokens_estimated = 0
+    refine_output_tokens_estimated = 0
     consistency_warnings = 0
     consistency_actions = 0
+    evidence_supported_claims = 0
+    evidence_unsupported_claims = 0
     selected_chapters = []
     cache = SimpleCache(config.cache.enabled, config.cache.backend, config.app.data_dir, config.cache.ttl_seconds)
     entity_llm_client: OpenAIChatClient | None = None
     narration_llm_client: OpenAIChatClient | None = None
+    refine_llm_client: OpenAIChatClient | None = None
     model_identifier = STORYTELLER_MVP_MODEL
 
     try:
@@ -87,6 +98,11 @@ async def storytell_book(
         entity_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_entity")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Storyteller entity LLM disabled; extraction fallback mode enabled: {}", exc)
+
+    try:
+        refine_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_refine")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Storyteller refine LLM disabled; refine fallback mode enabled: {}", exc)
 
     try:
         async with session_scope() as session:
@@ -106,6 +122,7 @@ async def storytell_book(
                 book_id=book_id,
                 entity_llm_client=entity_llm_client,
                 narration_llm_client=narration_llm_client,
+                refine_llm_client=refine_llm_client,
             )
 
             for chapter in selected_chapters:
@@ -115,7 +132,11 @@ async def storytell_book(
                     continue
 
                 input_hash = sha256_text(
-                    f"{chapter.id}:{chapter.idx}:{chapter_text}:{config.storyteller.style}:{config.storyteller.narration_ratio}"
+                    (
+                        f"{chapter.id}:{chapter.idx}:{chapter_text}:{config.storyteller.style}:"
+                        f"{config.storyteller.narration_ratio}:{config.storyteller.refine_enabled}:"
+                        f"{config.llm.routes.storyteller_narration_chat}:{config.llm.routes.storyteller_refine_chat}"
+                    )
                 )
                 existing = await repo.get_narration(
                     chapter_id=chapter.id,
@@ -156,15 +177,24 @@ async def storytell_book(
 
                 entity_calls = int(final_state.get("entity_llm_calls") or 0)
                 narration_calls = int(final_state.get("narration_llm_calls") or 0)
-                llm_calls_estimated += entity_calls + narration_calls
+                refine_calls = int(final_state.get("refine_llm_calls") or 0)
+                llm_calls_estimated += entity_calls + narration_calls + refine_calls
+                refine_llm_calls_estimated += refine_calls
                 if bool(final_state.get("entity_llm_cache_hit")):
                     llm_cache_hits += entity_calls
                 if bool(final_state.get("narration_llm_cache_hit")):
                     llm_cache_hits += narration_calls
+                if bool(final_state.get("refine_llm_cache_hit")):
+                    llm_cache_hits += refine_calls
                 input_tokens_estimated += int(final_state.get("input_tokens_estimated") or 0)
                 output_tokens_estimated += int(final_state.get("output_tokens_estimated") or 0)
+                refine_input_tokens_estimated += int(final_state.get("refine_input_tokens_estimated") or 0)
+                refine_output_tokens_estimated += int(final_state.get("refine_output_tokens_estimated") or 0)
                 consistency_warnings += len(final_state.get("consistency_warnings") or [])
                 consistency_actions += len(final_state.get("consistency_actions") or [])
+                evidence_report = final_state.get("evidence_report") or {}
+                evidence_supported_claims += int(evidence_report.get("supported_claims") or 0)
+                evidence_unsupported_claims += int(evidence_report.get("unsupported_claims") or 0)
                 chapters_processed += 1
     finally:
         cache.close()
@@ -178,11 +208,16 @@ async def storytell_book(
         chapters_processed=chapters_processed,
         chapters_skipped=chapters_skipped,
         llm_calls_estimated=llm_calls_estimated,
+        refine_llm_calls_estimated=refine_llm_calls_estimated,
         llm_cache_hits=llm_cache_hits,
         llm_cache_misses=llm_cache_misses,
         input_tokens_estimated=input_tokens_estimated,
         output_tokens_estimated=output_tokens_estimated,
+        refine_input_tokens_estimated=refine_input_tokens_estimated,
+        refine_output_tokens_estimated=refine_output_tokens_estimated,
         consistency_warnings=consistency_warnings,
         consistency_actions=consistency_actions,
+        evidence_supported_claims=evidence_supported_claims,
+        evidence_unsupported_claims=evidence_unsupported_claims,
         runtime_seconds=runtime_seconds,
     )

@@ -166,12 +166,19 @@ async def _main_async() -> None:
             table.add_row("Chapters processed", str(stats.chapters_processed))
             table.add_row("Chapters skipped", str(stats.chapters_skipped))
             table.add_row("LLM calls (est)", str(stats.llm_calls_estimated))
+            table.add_row("Refine LLM calls", str(stats.refine_llm_calls_estimated))
             table.add_row("Cache hits", str(stats.llm_cache_hits))
             table.add_row("Cache misses", str(stats.llm_cache_misses))
             table.add_row("Input tokens (est)", str(stats.input_tokens_estimated))
             table.add_row("Output tokens (est)", str(stats.output_tokens_estimated))
+            table.add_row(
+                "Refine tokens in/out (est)",
+                f"{stats.refine_input_tokens_estimated}/{stats.refine_output_tokens_estimated}",
+            )
             table.add_row("Consistency warnings", str(stats.consistency_warnings))
             table.add_row("Consistency actions", str(stats.consistency_actions))
+            table.add_row("Evidence supported", str(stats.evidence_supported_claims))
+            table.add_row("Evidence unsupported", str(stats.evidence_unsupported_claims))
             table.add_row("Runtime (s)", f"{stats.runtime_seconds:.2f}")
             console.print(table)
             return
@@ -242,12 +249,21 @@ async def _main_async() -> None:
             table.add_row("Storytell chapters (processed)", str(storytell_stats.chapters_processed))
             table.add_row("Storytell chapters (skipped)", str(storytell_stats.chapters_skipped))
             table.add_row("Storytell LLM calls (est)", str(storytell_stats.llm_calls_estimated))
+            table.add_row("Storytell refine calls", str(storytell_stats.refine_llm_calls_estimated))
             table.add_row("Storytell cache hit/miss", f"{storytell_stats.llm_cache_hits}/{storytell_stats.llm_cache_misses}")
             table.add_row(
                 "Storytell tokens in/out (est)",
                 f"{storytell_stats.input_tokens_estimated}/{storytell_stats.output_tokens_estimated}",
             )
+            table.add_row(
+                "Storytell refine tokens in/out",
+                f"{storytell_stats.refine_input_tokens_estimated}/{storytell_stats.refine_output_tokens_estimated}",
+            )
             table.add_row("Consistency warn/action", f"{storytell_stats.consistency_warnings}/{storytell_stats.consistency_actions}")
+            table.add_row(
+                "Evidence support/unsupport",
+                f"{storytell_stats.evidence_supported_claims}/{storytell_stats.evidence_unsupported_claims}",
+            )
             table.add_row("Storytell runtime (s)", f"{storytell_stats.runtime_seconds:.2f}")
             table.add_row("Export", export_dir)
             console.print(table)

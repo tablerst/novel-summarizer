@@ -174,9 +174,11 @@ def test_llm_route_storyteller_node_specific_fallback() -> None:
 
     endpoint_name_entity, _, _ = config.llm.resolve_chat_route("storyteller_entity")
     endpoint_name_narration, _, _ = config.llm.resolve_chat_route("storyteller_narration")
+    endpoint_name_refine, _, _ = config.llm.resolve_chat_route("storyteller_refine")
 
     assert endpoint_name_entity == config.llm.routes.storyteller_chat
     assert endpoint_name_narration == config.llm.routes.storyteller_chat
+    assert endpoint_name_refine == config.llm.routes.storyteller_chat
 
 
 def test_llm_route_storyteller_node_specific_override() -> None:
@@ -207,6 +209,10 @@ def test_llm_route_storyteller_node_specific_override() -> None:
                         "provider": "p",
                         "model": "n-quality",
                     },
+                    "storyteller_refine_quality": {
+                        "provider": "p",
+                        "model": "r-quality",
+                    },
                 },
                 "embedding_endpoints": {
                     "embedding_default": {
@@ -219,6 +225,7 @@ def test_llm_route_storyteller_node_specific_override() -> None:
                     "storyteller_chat": "storyteller_default",
                     "storyteller_entity_chat": "storyteller_entity_fast",
                     "storyteller_narration_chat": "storyteller_narration_quality",
+                    "storyteller_refine_chat": "storyteller_refine_quality",
                     "embedding": "embedding_default",
                 },
             }
@@ -227,8 +234,11 @@ def test_llm_route_storyteller_node_specific_override() -> None:
 
     endpoint_name_entity, endpoint_entity, _ = custom.llm.resolve_chat_route("storyteller_entity")
     endpoint_name_narration, endpoint_narration, _ = custom.llm.resolve_chat_route("storyteller_narration")
+    endpoint_name_refine, endpoint_refine, _ = custom.llm.resolve_chat_route("storyteller_refine")
 
     assert endpoint_name_entity == "storyteller_entity_fast"
     assert endpoint_entity.model == "e-fast"
     assert endpoint_name_narration == "storyteller_narration_quality"
     assert endpoint_narration.model == "n-quality"
+    assert endpoint_name_refine == "storyteller_refine_quality"
+    assert endpoint_refine.model == "r-quality"

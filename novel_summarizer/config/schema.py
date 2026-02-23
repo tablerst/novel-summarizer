@@ -107,6 +107,7 @@ class LLMRoutesConfig(BaseModel):
     storyteller_chat: str = "storyteller_default"
     storyteller_entity_chat: str | None = None
     storyteller_narration_chat: str | None = None
+    storyteller_refine_chat: str | None = None
     embedding: str = "embedding_default"
 
 
@@ -151,6 +152,10 @@ class LLMConfig(BaseModel):
             raise ValueError(
                 f"llm.routes.storyteller_narration_chat not found: {self.routes.storyteller_narration_chat}"
             )
+        if self.routes.storyteller_refine_chat and self.routes.storyteller_refine_chat not in self.chat_endpoints:
+            raise ValueError(
+                f"llm.routes.storyteller_refine_chat not found: {self.routes.storyteller_refine_chat}"
+            )
         if self.routes.embedding not in self.embedding_endpoints:
             raise ValueError(f"llm.routes.embedding not found: {self.routes.embedding}")
 
@@ -158,7 +163,7 @@ class LLMConfig(BaseModel):
 
     def resolve_chat_route(
         self,
-        route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration"],
+        route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration", "storyteller_refine"],
     ) -> tuple[str, ChatEndpointConfig, LLMProviderConfig]:
         if route == "summarize":
             endpoint_name = self.routes.summarize_chat
@@ -166,8 +171,14 @@ class LLMConfig(BaseModel):
             endpoint_name = self.routes.storyteller_chat
         elif route == "storyteller_entity":
             endpoint_name = self.routes.storyteller_entity_chat or self.routes.storyteller_chat
-        else:
+        elif route == "storyteller_narration":
             endpoint_name = self.routes.storyteller_narration_chat or self.routes.storyteller_chat
+        else:
+            endpoint_name = (
+                self.routes.storyteller_refine_chat
+                or self.routes.storyteller_narration_chat
+                or self.routes.storyteller_chat
+            )
 
         endpoint = self.chat_endpoints[endpoint_name]
         provider = self.providers[endpoint.provider]
@@ -212,8 +223,12 @@ class StorytellerConfig(BaseModel):
     recent_events_window: int = 5
     include_key_dialogue: bool = True
     include_inner_thoughts: bool = True
+    refine_enabled: bool = True
+    refine_temperature: float = 0.35
+    evidence_min_support_score: float = 0.18
+    evidence_max_snippets: int = 3
 
-    @field_validator("narration_temperature", "entity_temperature", "state_temperature")
+    @field_validator("narration_temperature", "entity_temperature", "state_temperature", "refine_temperature")
     @classmethod
     def _temperature_range(cls, value: float) -> float:
         if not 0 <= value <= 2:
@@ -225,6 +240,20 @@ class StorytellerConfig(BaseModel):
     def _positive_int(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("storyteller integer config values must be positive")
+        return value
+
+    @field_validator("evidence_max_snippets")
+    @classmethod
+    def _positive_snippets(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("evidence_max_snippets must be positive")
+        return value
+
+    @field_validator("evidence_min_support_score")
+    @classmethod
+    def _support_score_range(cls, value: float) -> float:
+        if not 0 <= value <= 1:
+            raise ValueError("evidence_min_support_score must be between 0 and 1")
         return value
 
     @field_validator("narration_ratio")
