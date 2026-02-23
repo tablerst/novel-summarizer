@@ -21,6 +21,9 @@ DEEPSEEK_API_KEY=sk-...
 
 # 可选：覆盖 default.yaml 中某个 provider 的 base_url
 NOVEL_SUMMARIZER_LLM_PROVIDER_DEEPSEEK_BASE_URL=https://...
+
+# 可选：本地 Ollama embedding（注意用 host 根地址）
+NOVEL_SUMMARIZER_LLM_PROVIDER_LOCAL_EMBEDDING_BASE_URL=http://localhost:11434
 ```
 
 #### 3. 查看生效配置

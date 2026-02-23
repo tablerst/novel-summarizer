@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import time
 from typing import Any
 
+import httpx
 from langchain_openai import OpenAIEmbeddings
 
 from novel_summarizer.config.schema import AppConfigRoot
@@ -18,6 +20,7 @@ class EmbeddingResult:
 class ResolvedEmbeddingRuntime:
     endpoint_name: str
     provider_name: str
+    provider_kind: str
     model: str
     timeout_s: int
     max_concurrency: int
@@ -41,6 +44,7 @@ def resolve_embedding_runtime(config: AppConfigRoot) -> ResolvedEmbeddingRuntime
     return ResolvedEmbeddingRuntime(
         endpoint_name=endpoint_name,
         provider_name=endpoint.provider,
+        provider_kind=provider.kind,
         model=endpoint.model,
         timeout_s=endpoint.timeout_s,
         max_concurrency=endpoint.max_concurrency,
@@ -51,7 +55,62 @@ def resolve_embedding_runtime(config: AppConfigRoot) -> ResolvedEmbeddingRuntime
     )
 
 
-def _build_embeddings_model(runtime: ResolvedEmbeddingRuntime) -> OpenAIEmbeddings:
+class OllamaEmbeddingsModel:
+    def __init__(self, runtime: ResolvedEmbeddingRuntime):
+        base_url = (runtime.base_url or "http://127.0.0.1:11434").rstrip("/")
+        if base_url.endswith("/api"):
+            self.embed_url = f"{base_url}/embed"
+        else:
+            self.embed_url = f"{base_url}/api/embed"
+        self.model = runtime.model
+        self.timeout_s = runtime.timeout_s
+        self.retries = runtime.retries
+
+    def _extract_embeddings(self, payload: dict[str, Any]) -> list[list[float]]:
+        if "embeddings" in payload and isinstance(payload["embeddings"], list):
+            values = payload["embeddings"]
+            if values and isinstance(values[0], (int, float)):
+                return [list(values)]
+            return [list(item) for item in values]
+
+        if "embedding" in payload and isinstance(payload["embedding"], list):
+            return [list(payload["embedding"])]
+
+        raise ValueError("Invalid Ollama embedding response: missing 'embeddings' or 'embedding'")
+
+    def _embed(self, input_payload: str | list[str]) -> list[list[float]]:
+        headers = {"Content-Type": "application/json"}
+        body = {"model": self.model, "input": input_payload}
+
+        last_exc: Exception | None = None
+        attempts = max(1, self.retries + 1)
+        for attempt in range(attempts):
+            try:
+                with httpx.Client(timeout=self.timeout_s) as client:
+                    response = client.post(self.embed_url, headers=headers, json=body)
+                    response.raise_for_status()
+                    payload = response.json()
+                return self._extract_embeddings(payload)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < attempts - 1:
+                    time.sleep(min(0.3 * (2**attempt), 2.0))
+
+        raise RuntimeError("Ollama embedding request failed after retries") from last_exc
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        return self._embed(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        embeddings = self._embed(text)
+        if not embeddings:
+            raise ValueError("Ollama embedding response is empty")
+        return embeddings[0]
+
+
+def _build_openai_embeddings_model(runtime: ResolvedEmbeddingRuntime) -> OpenAIEmbeddings:
     kwargs: dict[str, Any] = {
         "model": runtime.model,
         "max_retries": runtime.retries,
@@ -69,6 +128,12 @@ def _build_embeddings_model(runtime: ResolvedEmbeddingRuntime) -> OpenAIEmbeddin
         kwargs.pop("api_key", None)
         kwargs.pop("max_retries", None)
         return OpenAIEmbeddings(**kwargs)
+
+
+def _build_embeddings_model(runtime: ResolvedEmbeddingRuntime):
+    if runtime.provider_kind == "ollama":
+        return OllamaEmbeddingsModel(runtime)
+    return _build_openai_embeddings_model(runtime)
 
 
 class OpenAIEmbeddingClient:

@@ -53,7 +53,7 @@ class SplitConfig(BaseModel):
 class LLMProviderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["openai_compatible"] = "openai_compatible"
+    kind: Literal["openai_compatible", "ollama"] = "openai_compatible"
     base_url: str | None = None
     api_key_env: str | None = None
 
