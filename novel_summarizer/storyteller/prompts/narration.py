@@ -41,9 +41,9 @@ def narration_prompt(
         "输出 JSON schema：\n"
         "{{\n"
         '  "narration": "string",\n'
-        '  "key_events": [{"who":"string","what":"string","where":"string","outcome":"string","impact":"string"}],\n'
-        '  "character_updates": [{"name":"string","change_type":"status|location|ability|relationship","before":"string","after":"string","evidence":"string"}],\n'
-        '  "new_items": [{"name":"string","owner":"string","description":"string"}]\n'
+        '  "key_events": [{{"who":"string","what":"string","where":"string","outcome":"string","impact":"string"}}],\n'
+        '  "character_updates": [{{"name":"string","change_type":"status|location|ability|relationship","before":"string","after":"string","evidence":"string"}}],\n'
+        '  "new_items": [{{"name":"string","owner":"string","description":"string"}}]\n'
         "}}\n"
     )
     return system, user

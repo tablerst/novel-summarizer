@@ -29,14 +29,14 @@ llm:
   chat_endpoints:
     summarize_default:
       provider: "deepseek"
-      model: "deepseek-v3.2"
+      model: "deepseek-chat"
       temperature: 0.1
       timeout_s: 60
       max_concurrency: 6
       retries: 3
     storyteller_default:
       provider: "deepseek"
-      model: "deepseek-v3.2"
+      model: "deepseek-chat"
       temperature: 0.45
       timeout_s: 60
       max_concurrency: 4

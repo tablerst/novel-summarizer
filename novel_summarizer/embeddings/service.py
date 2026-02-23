@@ -317,6 +317,10 @@ def _retrieve_vector_records(
         return []
 
     store = _build_vector_store(config, table_name)
+    table = store.get_table()
+    if table is None:
+        return []
+
     client = OpenAIEmbeddingClient(config)
     query_vector = client.embed_query(query_text)
     docs = store.similarity_search_by_vector(query_vector, k=max(top_k, 1))
