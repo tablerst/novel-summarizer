@@ -16,11 +16,14 @@ from novel_summarizer.storage.types import (
     ItemRow,
     NarrationRow,
     PlotEventRow,
+    SearchHitRow,
     SummaryRow,
+    WorldFactRow,
 )
 from novel_summarizer.storage.world_state import characters as characters_crud
 from novel_summarizer.storage.world_state import items as items_crud
 from novel_summarizer.storage.world_state import plot_events as plot_events_crud
+from novel_summarizer.storage.world_state import world_facts as world_facts_crud
 
 
 class SQLAlchemyRepo:
@@ -87,6 +90,25 @@ class SQLAlchemyRepo:
     async def list_chunks(self, chapter_id: int) -> list[ChunkRow]:
         return await chunks_crud.list_chunks(self.session, chapter_id)
 
+    async def rebuild_chunks_fts_for_book(self, book_id: int) -> int:
+        return await chunks_crud.rebuild_chunks_fts_for_book(self.session, book_id)
+
+    async def search_chunks_fts(
+        self,
+        *,
+        book_id: int,
+        query: str,
+        before_chapter_idx: int | None,
+        limit: int,
+    ) -> list[SearchHitRow]:
+        return await chunks_crud.search_chunks_fts(
+            self.session,
+            book_id=book_id,
+            query=query,
+            before_chapter_idx=before_chapter_idx,
+            limit=limit,
+        )
+
     async def get_narration(
         self,
         chapter_id: int,
@@ -107,6 +129,25 @@ class SQLAlchemyRepo:
 
     async def list_narrations_by_book(self, book_id: int) -> list[NarrationRow]:
         return await narrations_crud.list_narrations_by_book(self.session, book_id)
+
+    async def rebuild_narrations_fts_for_book(self, book_id: int) -> int:
+        return await narrations_crud.rebuild_narrations_fts_for_book(self.session, book_id)
+
+    async def search_narrations_fts(
+        self,
+        *,
+        book_id: int,
+        query: str,
+        before_chapter_idx: int | None,
+        limit: int,
+    ) -> list[SearchHitRow]:
+        return await narrations_crud.search_narrations_fts(
+            self.session,
+            book_id=book_id,
+            query=query,
+            before_chapter_idx=before_chapter_idx,
+            limit=limit,
+        )
 
     async def upsert_narration(
         self,
@@ -206,6 +247,9 @@ class SQLAlchemyRepo:
             limit=limit,
         )
 
+    async def list_plot_events_by_book(self, book_id: int) -> list[PlotEventRow]:
+        return await plot_events_crud.list_plot_events_by_book(self.session, book_id=book_id)
+
     async def insert_plot_event(
         self,
         book_id: int,
@@ -223,6 +267,29 @@ class SQLAlchemyRepo:
             involved_characters_json=involved_characters_json,
             event_type=event_type,
             impact=impact,
+        )
+
+    async def list_world_facts(self, book_id: int, limit: int = 500) -> list[WorldFactRow]:
+        return await world_facts_crud.list_world_facts(self.session, book_id=book_id, limit=limit)
+
+    async def upsert_world_fact(
+        self,
+        *,
+        book_id: int,
+        fact_key: str,
+        fact_value: str,
+        confidence: float = 0.8,
+        source_chapter_idx: int | None = None,
+        source_excerpt: str | None = None,
+    ) -> InsertResult:
+        return await world_facts_crud.upsert_world_fact(
+            self.session,
+            book_id=book_id,
+            fact_key=fact_key,
+            fact_value=fact_value,
+            confidence=confidence,
+            source_chapter_idx=source_chapter_idx,
+            source_excerpt=source_excerpt,
         )
 
     async def get_summary(

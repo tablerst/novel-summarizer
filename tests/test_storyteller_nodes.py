@@ -47,16 +47,36 @@ def test_entity_extract_uses_llm_and_normalizes() -> None:
 def test_memory_retrieve_filters_future_and_current(monkeypatch) -> None:
     config = AppConfigRoot()
 
-    def _fake_retrieve_evidence(*, book_id, config, query_text, top_k):
-        _ = (book_id, config, query_text, top_k)
+    async def _fake_retrieve_hybrid_memories(
+        *,
+        book_id,
+        config,
+        query_text,
+        top_k,
+        current_chapter_idx,
+        keyword_terms,
+    ):
+        _ = (book_id, config, query_text, top_k, current_chapter_idx, keyword_terms)
         return [
-            {"chapter_idx": 1, "chapter_title": "第1章", "chunk_id": 101, "text": "前情A"},
-            {"chapter_idx": 3, "chapter_title": "第3章", "chunk_id": 301, "text": "当前章内容"},
-            {"chapter_idx": 8, "chapter_title": "第8章", "chunk_id": 801, "text": "未来剧情"},
-            {"chapter_idx": 2, "chapter_title": "第2章", "chunk_id": 201, "text": "前情B"},
+            {
+                "source_type": "chunk",
+                "source_id": 101,
+                "chapter_idx": 1,
+                "chapter_title": "第1章",
+                "text": "前情A",
+                "score": 0.9,
+            },
+            {
+                "source_type": "narration",
+                "source_id": 202,
+                "chapter_idx": 2,
+                "chapter_title": "第2章",
+                "text": "前情B",
+                "score": 0.8,
+            },
         ]
 
-    monkeypatch.setattr(memory_retrieve, "retrieve_evidence", _fake_retrieve_evidence)
+    monkeypatch.setattr(memory_retrieve, "retrieve_hybrid_memories", _fake_retrieve_hybrid_memories)
 
     state = cast(
         StorytellerState,
@@ -71,7 +91,8 @@ def test_memory_retrieve_filters_future_and_current(monkeypatch) -> None:
 
     assert len(memories) == 2
     assert all(int(item["chapter_idx"]) < 3 for item in memories)
-    assert [item["chunk_id"] for item in memories] == [101, 201]
+    assert [item["source_id"] for item in memories] == [101, 202]
+    assert [item["source_type"] for item in memories] == ["chunk", "narration"]
 
 
 def test_storyteller_generate_fallback_produces_narration() -> None:

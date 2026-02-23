@@ -167,3 +167,68 @@ def test_load_config_merge_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert config.app.output_dir == (tmp_path / "out-override").resolve()
     assert config.llm.chat_endpoints["summarize_default"].model == "gpt-profile"
     assert config.llm.providers["openai"].base_url == "https://env-llm.example/v1"
+
+
+def test_llm_route_storyteller_node_specific_fallback() -> None:
+    config = AppConfigRoot()
+
+    endpoint_name_entity, _, _ = config.llm.resolve_chat_route("storyteller_entity")
+    endpoint_name_narration, _, _ = config.llm.resolve_chat_route("storyteller_narration")
+
+    assert endpoint_name_entity == config.llm.routes.storyteller_chat
+    assert endpoint_name_narration == config.llm.routes.storyteller_chat
+
+
+def test_llm_route_storyteller_node_specific_override() -> None:
+    custom = AppConfigRoot.model_validate(
+        {
+            "llm": {
+                "providers": {
+                    "p": {
+                        "kind": "openai_compatible",
+                        "base_url": "https://api.example.com/v1",
+                        "api_key_env": None,
+                    }
+                },
+                "chat_endpoints": {
+                    "summarize_default": {
+                        "provider": "p",
+                        "model": "s",
+                    },
+                    "storyteller_default": {
+                        "provider": "p",
+                        "model": "g",
+                    },
+                    "storyteller_entity_fast": {
+                        "provider": "p",
+                        "model": "e-fast",
+                    },
+                    "storyteller_narration_quality": {
+                        "provider": "p",
+                        "model": "n-quality",
+                    },
+                },
+                "embedding_endpoints": {
+                    "embedding_default": {
+                        "provider": "p",
+                        "model": "emb",
+                    }
+                },
+                "routes": {
+                    "summarize_chat": "summarize_default",
+                    "storyteller_chat": "storyteller_default",
+                    "storyteller_entity_chat": "storyteller_entity_fast",
+                    "storyteller_narration_chat": "storyteller_narration_quality",
+                    "embedding": "embedding_default",
+                },
+            }
+        }
+    )
+
+    endpoint_name_entity, endpoint_entity, _ = custom.llm.resolve_chat_route("storyteller_entity")
+    endpoint_name_narration, endpoint_narration, _ = custom.llm.resolve_chat_route("storyteller_narration")
+
+    assert endpoint_name_entity == "storyteller_entity_fast"
+    assert endpoint_entity.model == "e-fast"
+    assert endpoint_name_narration == "storyteller_narration_quality"
+    assert endpoint_narration.model == "n-quality"

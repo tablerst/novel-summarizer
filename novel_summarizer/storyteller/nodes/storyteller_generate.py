@@ -20,6 +20,13 @@ def _draft_narration(text: str, ratio: tuple[float, float]) -> str:
     return text[:target_len].strip()
 
 
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    # Coarse estimate for Chinese-heavy text: ~2 chars/token
+    return max(1, len(text) // 2)
+
+
 def _normalize_dict_list(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -53,6 +60,10 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             "key_events": key_events,
             "character_updates": [],
             "new_items": [],
+            "narration_llm_calls": 0,
+            "narration_llm_cache_hit": False,
+            "input_tokens_estimated": _estimate_tokens(chapter_text),
+            "output_tokens_estimated": _estimate_tokens(narration),
         }
 
     try:
@@ -95,7 +106,8 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             input_hash,
             str(config.storyteller.narration_temperature),
         )
-        _, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+        llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+        cache_hit = bool(getattr(llm_response, "cached", False))
 
         narration = str(payload.get("narration", "")).strip() or fallback_narration
         key_events = _normalize_dict_list(payload.get("key_events", []))
@@ -118,6 +130,10 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             "key_events": key_events,
             "character_updates": character_updates,
             "new_items": new_items,
+            "narration_llm_calls": 1,
+            "narration_llm_cache_hit": cache_hit,
+            "input_tokens_estimated": _estimate_tokens(chapter_text),
+            "output_tokens_estimated": _estimate_tokens(narration),
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Storyteller generation fallback due to LLM error: {}", exc)
@@ -139,4 +155,8 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             "key_events": key_events,
             "character_updates": [],
             "new_items": [],
+            "narration_llm_calls": 1,
+            "narration_llm_cache_hit": False,
+            "input_tokens_estimated": _estimate_tokens(chapter_text),
+            "output_tokens_estimated": _estimate_tokens(narration),
         }

@@ -56,6 +56,8 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             "entities_mentioned": fallback["characters"],
             "locations_mentioned": fallback["locations"],
             "items_mentioned": fallback["items"],
+            "entity_llm_calls": 0,
+            "entity_llm_cache_hit": False,
         }
 
     try:
@@ -71,11 +73,14 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             input_hash,
             str(config.storyteller.entity_temperature),
         )
-        _, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+        llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+        cache_hit = bool(getattr(llm_response, "cached", False))
         return {
             "entities_mentioned": _normalize_list_field(payload, "characters", max_items=16),
             "locations_mentioned": _normalize_list_field(payload, "locations", max_items=16),
             "items_mentioned": _normalize_list_field(payload, "items", max_items=16),
+            "entity_llm_calls": 1,
+            "entity_llm_cache_hit": cache_hit,
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Entity extraction fallback due to LLM error: {}", exc)
@@ -83,4 +88,6 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             "entities_mentioned": fallback["characters"],
             "locations_mentioned": fallback["locations"],
             "items_mentioned": fallback["items"],
+            "entity_llm_calls": 1,
+            "entity_llm_cache_hit": False,
         }

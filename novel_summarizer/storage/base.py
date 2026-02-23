@@ -16,5 +16,6 @@ def import_all_models() -> None:
     from novel_summarizer.storage.world_state.characters import CharacterState
     from novel_summarizer.storage.world_state.items import ItemState
     from novel_summarizer.storage.world_state.plot_events import PlotEvent
+    from novel_summarizer.storage.world_state.world_facts import WorldFact
 
-    _ = (Book, Chapter, Chunk, Summary, Narration, CharacterState, ItemState, PlotEvent)
+    _ = (Book, Chapter, Chunk, Summary, Narration, CharacterState, ItemState, PlotEvent, WorldFact)

@@ -19,6 +19,7 @@ class StorytellerState(TypedDict):
     character_states: NotRequired[list[dict]]
     item_states: NotRequired[list[dict]]
     recent_events: NotRequired[list[dict]]
+    world_facts: NotRequired[list[dict]]
 
     awakened_memories: NotRequired[list[dict]]
 
@@ -26,6 +27,16 @@ class StorytellerState(TypedDict):
     key_events: NotRequired[list[dict]]
     character_updates: NotRequired[list[dict]]
     new_items: NotRequired[list[dict]]
+    consistency_warnings: NotRequired[list[str]]
+    consistency_actions: NotRequired[list[str]]
+
+    # Runtime report metrics
+    entity_llm_calls: NotRequired[int]
+    entity_llm_cache_hit: NotRequired[bool]
+    narration_llm_calls: NotRequired[int]
+    narration_llm_cache_hit: NotRequired[bool]
+    input_tokens_estimated: NotRequired[int]
+    output_tokens_estimated: NotRequired[int]
 
     mutations_applied: NotRequired[dict]
     memory_committed: NotRequired[bool]

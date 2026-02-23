@@ -38,7 +38,10 @@ class ResolvedChatRuntime:
 T = TypeVar("T")
 
 
-def resolve_chat_runtime(config: AppConfigRoot, route: Literal["summarize", "storyteller"]) -> ResolvedChatRuntime:
+def resolve_chat_runtime(
+    config: AppConfigRoot,
+    route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration"],
+) -> ResolvedChatRuntime:
     endpoint_name, endpoint, provider = config.llm.resolve_chat_route(route)
     api_key = None
     if provider.api_key_env:
@@ -90,7 +93,12 @@ def make_cache_key(*parts: str) -> str:
 
 
 class OpenAIChatClient:
-    def __init__(self, config: AppConfigRoot, cache: SimpleCache, route: Literal["summarize", "storyteller"] = "summarize"):
+    def __init__(
+        self,
+        config: AppConfigRoot,
+        cache: SimpleCache,
+        route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration"] = "summarize",
+    ):
         self.config = config
         self.cache = cache
         self.runtime = resolve_chat_runtime(config, route)

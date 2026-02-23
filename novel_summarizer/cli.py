@@ -13,7 +13,7 @@ from loguru import logger
 
 from novel_summarizer.config import load_config
 from novel_summarizer.config.loader import masked_env_snapshot
-from novel_summarizer.embeddings.service import embed_book_chunks
+from novel_summarizer.embeddings.service import prepare_retrieval_assets
 from novel_summarizer.export.markdown import export_book_markdown
 from novel_summarizer.ingest.service import ingest_book
 from novel_summarizer.storyteller.service import storytell_book
@@ -57,7 +57,15 @@ def _build_parser() -> argparse.ArgumentParser:
     embed_parser.add_argument("--book-id", type=int, required=True, help="Book id to embed")
     embed_parser.add_argument("--batch-size", type=int, default=32, help="Embedding batch size")
 
-    subparsers.add_parser("run", help="Run pipeline (M0 stub)")
+    run_parser = subparsers.add_parser("run", help="Run pipeline (ingest -> storytell -> export)")
+    run_parser.add_argument("--book-id", type=int, default=None, help="Existing book id (skip ingest)")
+    run_parser.add_argument("--input", type=Path, default=None, help="Path to novel text file (required if --book-id absent)")
+    run_parser.add_argument("--title", type=str, default=None, help="Book title (used during ingest)")
+    run_parser.add_argument("--author", type=str, default=None, help="Book author (used during ingest)")
+    run_parser.add_argument("--chapter-regex", type=str, default=None, help="Override chapter regex during ingest")
+    run_parser.add_argument("--from-chapter", type=int, default=None, help="Start chapter idx (inclusive)")
+    run_parser.add_argument("--to-chapter", type=int, default=None, help="End chapter idx (inclusive)")
+    run_parser.add_argument("--no-export", action="store_true", help="Skip markdown export")
 
     return parser
 
@@ -157,6 +165,14 @@ async def _main_async() -> None:
             table.add_row("Chapters total", str(stats.chapters_total))
             table.add_row("Chapters processed", str(stats.chapters_processed))
             table.add_row("Chapters skipped", str(stats.chapters_skipped))
+            table.add_row("LLM calls (est)", str(stats.llm_calls_estimated))
+            table.add_row("Cache hits", str(stats.llm_cache_hits))
+            table.add_row("Cache misses", str(stats.llm_cache_misses))
+            table.add_row("Input tokens (est)", str(stats.input_tokens_estimated))
+            table.add_row("Output tokens (est)", str(stats.output_tokens_estimated))
+            table.add_row("Consistency warnings", str(stats.consistency_warnings))
+            table.add_row("Consistency actions", str(stats.consistency_actions))
+            table.add_row("Runtime (s)", f"{stats.runtime_seconds:.2f}")
             console.print(table)
             return
 
@@ -171,14 +187,69 @@ async def _main_async() -> None:
             return
 
         if args.command == "embed":
-            stats = await embed_book_chunks(book_id=args.book_id, config=config, batch_size=args.batch_size)
+            stats = await prepare_retrieval_assets(book_id=args.book_id, config=config, batch_size=args.batch_size)
             table = Table(title="Embedding Summary", show_header=True, header_style="bold")
             table.add_column("Metric")
             table.add_column("Value")
             table.add_row("Book ID", str(stats.book_id))
-            table.add_row("Chunks total", str(stats.chunks_total))
-            table.add_row("Chunks embedded", str(stats.chunks_embedded))
-            table.add_row("Chunks skipped", str(stats.chunks_skipped))
+            table.add_row("Chunk vectors embedded", str(stats.chunk_vectors_embedded))
+            table.add_row("Narration vectors embedded", str(stats.narration_vectors_embedded))
+            table.add_row("Chunk FTS rows", str(stats.chunk_fts_rows))
+            table.add_row("Narration FTS rows", str(stats.narration_fts_rows))
+            console.print(table)
+            return
+
+        if args.command == "run":
+            if args.book_id is None and args.input is None:
+                raise ValueError("run requires --book-id or --input")
+
+            book_id = args.book_id
+            ingest_stats = None
+
+            if args.input is not None:
+                ingest_stats = await ingest_book(
+                    input_path=args.input,
+                    config=config,
+                    title=args.title,
+                    author=args.author,
+                    chapter_regex_override=args.chapter_regex,
+                )
+                book_id = ingest_stats.book_id
+
+            if book_id is None:
+                raise ValueError("Unable to determine book_id for run pipeline")
+
+            storytell_stats = await storytell_book(
+                book_id=book_id,
+                config=config,
+                from_chapter=args.from_chapter,
+                to_chapter=args.to_chapter,
+            )
+
+            export_dir = "(skipped)"
+            if not args.no_export:
+                export_result = await export_book_markdown(book_id=book_id, config=config)
+                export_dir = str(export_result.output_dir)
+
+            table = Table(title="Run Pipeline Summary", show_header=True, header_style="bold")
+            table.add_column("Metric")
+            table.add_column("Value")
+            table.add_row("Book ID", str(book_id))
+            if ingest_stats is not None:
+                table.add_row("Ingest chapters (total/new)", f"{ingest_stats.chapters_total}/{ingest_stats.chapters_inserted}")
+                table.add_row("Ingest chunks (total/new)", f"{ingest_stats.chunks_total}/{ingest_stats.chunks_inserted}")
+            table.add_row("Storytell chapters (total)", str(storytell_stats.chapters_total))
+            table.add_row("Storytell chapters (processed)", str(storytell_stats.chapters_processed))
+            table.add_row("Storytell chapters (skipped)", str(storytell_stats.chapters_skipped))
+            table.add_row("Storytell LLM calls (est)", str(storytell_stats.llm_calls_estimated))
+            table.add_row("Storytell cache hit/miss", f"{storytell_stats.llm_cache_hits}/{storytell_stats.llm_cache_misses}")
+            table.add_row(
+                "Storytell tokens in/out (est)",
+                f"{storytell_stats.input_tokens_estimated}/{storytell_stats.output_tokens_estimated}",
+            )
+            table.add_row("Consistency warn/action", f"{storytell_stats.consistency_warnings}/{storytell_stats.consistency_actions}")
+            table.add_row("Storytell runtime (s)", f"{storytell_stats.runtime_seconds:.2f}")
+            table.add_row("Export", export_dir)
             console.print(table)
             return
 

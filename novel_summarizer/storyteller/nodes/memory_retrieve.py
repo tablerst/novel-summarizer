@@ -3,7 +3,7 @@ from __future__ import annotations
 from loguru import logger
 
 from novel_summarizer.config.schema import AppConfigRoot
-from novel_summarizer.embeddings.service import retrieve_evidence
+from novel_summarizer.embeddings.service import retrieve_hybrid_memories
 from novel_summarizer.storyteller.state import StorytellerState
 
 
@@ -14,21 +14,27 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, book_id: int) -
         return {"awakened_memories": []}
 
     chapter_text = str(state.get("chapter_text") or "")
-    entities = state.get("entities_mentioned") or []
+    entities = [str(item) for item in (state.get("entities_mentioned") or [])]
+    locations = [str(item) for item in (state.get("locations_mentioned") or [])]
+    items = [str(item) for item in (state.get("items_mentioned") or [])]
     query_text = "\n".join(
         [
             f"chapter_idx={chapter_idx}",
             f"entities={', '.join(entities)}",
+            f"locations={', '.join(locations)}",
+            f"items={', '.join(items)}",
             chapter_text[:2000],
         ]
     )
 
     try:
-        candidates = retrieve_evidence(
+        candidates = await retrieve_hybrid_memories(
             book_id=book_id,
             config=config,
             query_text=query_text,
-            top_k=max(top_k * 3, top_k),
+            top_k=max(top_k, 1),
+            current_chapter_idx=chapter_idx,
+            keyword_terms=entities + locations + items,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Memory retrieve failed, fallback to empty memories: {}", exc)
@@ -36,22 +42,17 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, book_id: int) -
 
     memories: list[dict] = []
     for item in candidates:
-        source_chapter_idx = item.get("chapter_idx")
-        if source_chapter_idx is None:
-            continue
-        try:
-            source_chapter_idx = int(source_chapter_idx)
-        except (TypeError, ValueError):
-            continue
-        if source_chapter_idx >= chapter_idx:
-            continue
+        source_chapter_idx = int(item.get("chapter_idx") or 0)
+        source_type = str(item.get("source_type") or "chunk")
+        source_id = int(item.get("source_id") or 0)
 
         memories.append(
             {
-                "chunk_id": item.get("chunk_id"),
+                "source_id": source_id,
                 "chapter_idx": source_chapter_idx,
                 "chapter_title": item.get("chapter_title"),
-                "source_type": "chunk",
+                "source_type": source_type,
+                "score": float(item.get("score", 0.0)),
                 "text": str(item.get("text", ""))[:600],
             }
         )

@@ -67,6 +67,24 @@ async def list_recent_plot_events(
     return [_to_row(row) for row in rows]
 
 
+async def list_plot_events_by_book(session: AsyncSession, book_id: int) -> list[PlotEventRow]:
+    result = await session.execute(
+        select(
+            PlotEvent.id,
+            PlotEvent.book_id,
+            PlotEvent.chapter_idx,
+            PlotEvent.event_summary,
+            PlotEvent.involved_characters_json,
+            PlotEvent.event_type,
+            PlotEvent.impact,
+        )
+        .where(PlotEvent.book_id == book_id)
+        .order_by(PlotEvent.chapter_idx, PlotEvent.id)
+    )
+    rows = result.all()
+    return [_to_row(row) for row in rows]
+
+
 async def insert_plot_event(
     session: AsyncSession,
     book_id: int,

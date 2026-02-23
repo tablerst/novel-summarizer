@@ -95,3 +95,24 @@ class PlotEventRow:
     involved_characters_json: str | None
     event_type: str | None
     impact: str | None
+
+
+@dataclass
+class SearchHitRow:
+    source_type: str
+    source_id: int
+    chapter_idx: int
+    chapter_title: str
+    text: str
+    score: float | None = None
+
+
+@dataclass
+class WorldFactRow:
+    id: int
+    book_id: int
+    fact_key: str
+    fact_value: str
+    confidence: float
+    source_chapter_idx: int | None
+    source_excerpt: str | None

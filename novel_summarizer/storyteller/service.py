@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import orjson
 from loguru import logger
 
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.domain.hashing import sha256_text
-from novel_summarizer.embeddings.service import embed_book_chunks
+from novel_summarizer.embeddings.service import prepare_retrieval_assets
 from novel_summarizer.llm.cache import SimpleCache
 from novel_summarizer.llm.factory import OpenAIChatClient
 from novel_summarizer.storage.db import session_scope
@@ -25,6 +26,14 @@ class StorytellStats:
     chapters_total: int
     chapters_processed: int
     chapters_skipped: int
+    llm_calls_estimated: int
+    llm_cache_hits: int
+    llm_cache_misses: int
+    input_tokens_estimated: int
+    output_tokens_estimated: int
+    consistency_warnings: int
+    consistency_actions: int
+    runtime_seconds: float
 
 
 def _filter_chapters(chapters, from_chapter: int | None, to_chapter: int | None):
@@ -53,18 +62,31 @@ async def storytell_book(
     from_chapter: int | None = None,
     to_chapter: int | None = None,
 ) -> StorytellStats:
+    started_at = time.perf_counter()
     chapters_processed = 0
     chapters_skipped = 0
+    llm_calls_estimated = 0
+    llm_cache_hits = 0
+    input_tokens_estimated = 0
+    output_tokens_estimated = 0
+    consistency_warnings = 0
+    consistency_actions = 0
     selected_chapters = []
     cache = SimpleCache(config.cache.enabled, config.cache.backend, config.app.data_dir, config.cache.ttl_seconds)
-    llm_client: OpenAIChatClient | None = None
+    entity_llm_client: OpenAIChatClient | None = None
+    narration_llm_client: OpenAIChatClient | None = None
     model_identifier = STORYTELLER_MVP_MODEL
 
     try:
-        llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller")
-        model_identifier = llm_client.model_identifier
+        narration_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_narration")
+        model_identifier = narration_llm_client.model_identifier
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Storyteller LLM disabled; fallback mode enabled: {}", exc)
+        logger.warning("Storyteller narration LLM disabled; fallback mode enabled: {}", exc)
+
+    try:
+        entity_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_entity")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Storyteller entity LLM disabled; extraction fallback mode enabled: {}", exc)
 
     try:
         async with session_scope() as session:
@@ -72,13 +94,19 @@ async def storytell_book(
 
             if config.storyteller.memory_top_k > 0:
                 try:
-                    await embed_book_chunks(book_id=book_id, config=config)
+                    await prepare_retrieval_assets(book_id=book_id, config=config)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Embedding prebuild failed for storyteller retrieval: {}", exc)
+                    logger.warning("Retrieval assets prebuild failed for storyteller retrieval: {}", exc)
 
             chapters = await repo.list_chapters(book_id)
             selected_chapters = _filter_chapters(chapters, from_chapter=from_chapter, to_chapter=to_chapter)
-            graph = build_storyteller_graph(repo=repo, config=config, book_id=book_id, llm_client=llm_client)
+            graph = build_storyteller_graph(
+                repo=repo,
+                config=config,
+                book_id=book_id,
+                entity_llm_client=entity_llm_client,
+                narration_llm_client=narration_llm_client,
+            )
 
             for chapter in selected_chapters:
                 chapter_text = await _chapter_text(repo, chapter.id)
@@ -125,13 +153,36 @@ async def storytell_book(
                     model=model_identifier,
                     input_hash=input_hash,
                 )
+
+                entity_calls = int(final_state.get("entity_llm_calls") or 0)
+                narration_calls = int(final_state.get("narration_llm_calls") or 0)
+                llm_calls_estimated += entity_calls + narration_calls
+                if bool(final_state.get("entity_llm_cache_hit")):
+                    llm_cache_hits += entity_calls
+                if bool(final_state.get("narration_llm_cache_hit")):
+                    llm_cache_hits += narration_calls
+                input_tokens_estimated += int(final_state.get("input_tokens_estimated") or 0)
+                output_tokens_estimated += int(final_state.get("output_tokens_estimated") or 0)
+                consistency_warnings += len(final_state.get("consistency_warnings") or [])
+                consistency_actions += len(final_state.get("consistency_actions") or [])
                 chapters_processed += 1
     finally:
         cache.close()
+
+    runtime_seconds = time.perf_counter() - started_at
+    llm_cache_misses = max(0, llm_calls_estimated - llm_cache_hits)
 
     return StorytellStats(
         book_id=book_id,
         chapters_total=len(selected_chapters),
         chapters_processed=chapters_processed,
         chapters_skipped=chapters_skipped,
+        llm_calls_estimated=llm_calls_estimated,
+        llm_cache_hits=llm_cache_hits,
+        llm_cache_misses=llm_cache_misses,
+        input_tokens_estimated=input_tokens_estimated,
+        output_tokens_estimated=output_tokens_estimated,
+        consistency_warnings=consistency_warnings,
+        consistency_actions=consistency_actions,
+        runtime_seconds=runtime_seconds,
     )

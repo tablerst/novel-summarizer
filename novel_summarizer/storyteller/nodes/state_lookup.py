@@ -18,9 +18,11 @@ async def run(state: StorytellerState, *, repo: SQLAlchemyRepo, config: AppConfi
         chapter_idx=state.get("chapter_idx"),
         window=config.storyteller.recent_events_window,
     )
+    world_facts = await repo.list_world_facts(book_id=book_id, limit=500)
 
     return {
         "character_states": [asdict(row) for row in characters],
         "item_states": [asdict(row) for row in items],
         "recent_events": [asdict(row) for row in recent_events],
+        "world_facts": [asdict(row) for row in world_facts],
     }

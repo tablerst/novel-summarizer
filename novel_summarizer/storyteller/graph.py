@@ -5,6 +5,7 @@ from langgraph.graph import END, START, StateGraph
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.llm.factory import OpenAIChatClient
 from novel_summarizer.storyteller.nodes import (
+    consistency_check,
     entity_extract,
     memory_commit,
     memory_retrieve,
@@ -21,12 +22,13 @@ def build_storyteller_graph(
     repo: SQLAlchemyRepo,
     config: AppConfigRoot,
     book_id: int,
-    llm_client: OpenAIChatClient | None = None,
+    entity_llm_client: OpenAIChatClient | None = None,
+    narration_llm_client: OpenAIChatClient | None = None,
 ):
     workflow = StateGraph(StorytellerState)
 
     async def _entity_extract(state: StorytellerState) -> dict:
-        return await entity_extract.run(state, config=config, llm_client=llm_client)
+        return await entity_extract.run(state, config=config, llm_client=entity_llm_client)
 
     async def _state_lookup(state: StorytellerState) -> dict:
         return await state_lookup.run(state, repo=repo, config=config, book_id=book_id)
@@ -35,7 +37,10 @@ def build_storyteller_graph(
         return await memory_retrieve.run(state, config=config, book_id=book_id)
 
     async def _storyteller_generate(state: StorytellerState) -> dict:
-        return await storyteller_generate.run(state, config=config, llm_client=llm_client)
+        return await storyteller_generate.run(state, config=config, llm_client=narration_llm_client)
+
+    async def _consistency_check(state: StorytellerState) -> dict:
+        return await consistency_check.run(state, config=config)
 
     async def _state_update(state: StorytellerState) -> dict:
         return await state_update.run(state, repo=repo, config=config, book_id=book_id)
@@ -47,6 +52,7 @@ def build_storyteller_graph(
     workflow.add_node("state_lookup", _state_lookup)
     workflow.add_node("memory_retrieve", _memory_retrieve)
     workflow.add_node("storyteller_generate", _storyteller_generate)
+    workflow.add_node("consistency_check", _consistency_check)
     workflow.add_node("state_update", _state_update)
     workflow.add_node("memory_commit", _memory_commit)
 
@@ -54,7 +60,8 @@ def build_storyteller_graph(
     workflow.add_edge("entity_extract", "state_lookup")
     workflow.add_edge("state_lookup", "memory_retrieve")
     workflow.add_edge("memory_retrieve", "storyteller_generate")
-    workflow.add_edge("storyteller_generate", "state_update")
+    workflow.add_edge("storyteller_generate", "consistency_check")
+    workflow.add_edge("consistency_check", "state_update")
     workflow.add_edge("state_update", "memory_commit")
     workflow.add_edge("memory_commit", END)
 

@@ -105,6 +105,8 @@ class LLMRoutesConfig(BaseModel):
 
     summarize_chat: str = "summarize_default"
     storyteller_chat: str = "storyteller_default"
+    storyteller_entity_chat: str | None = None
+    storyteller_narration_chat: str | None = None
     embedding: str = "embedding_default"
 
 
@@ -141,13 +143,32 @@ class LLMConfig(BaseModel):
             raise ValueError(f"llm.routes.summarize_chat not found: {self.routes.summarize_chat}")
         if self.routes.storyteller_chat not in self.chat_endpoints:
             raise ValueError(f"llm.routes.storyteller_chat not found: {self.routes.storyteller_chat}")
+        if self.routes.storyteller_entity_chat and self.routes.storyteller_entity_chat not in self.chat_endpoints:
+            raise ValueError(
+                f"llm.routes.storyteller_entity_chat not found: {self.routes.storyteller_entity_chat}"
+            )
+        if self.routes.storyteller_narration_chat and self.routes.storyteller_narration_chat not in self.chat_endpoints:
+            raise ValueError(
+                f"llm.routes.storyteller_narration_chat not found: {self.routes.storyteller_narration_chat}"
+            )
         if self.routes.embedding not in self.embedding_endpoints:
             raise ValueError(f"llm.routes.embedding not found: {self.routes.embedding}")
 
         return self
 
-    def resolve_chat_route(self, route: Literal["summarize", "storyteller"]) -> tuple[str, ChatEndpointConfig, LLMProviderConfig]:
-        endpoint_name = self.routes.summarize_chat if route == "summarize" else self.routes.storyteller_chat
+    def resolve_chat_route(
+        self,
+        route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration"],
+    ) -> tuple[str, ChatEndpointConfig, LLMProviderConfig]:
+        if route == "summarize":
+            endpoint_name = self.routes.summarize_chat
+        elif route == "storyteller":
+            endpoint_name = self.routes.storyteller_chat
+        elif route == "storyteller_entity":
+            endpoint_name = self.routes.storyteller_entity_chat or self.routes.storyteller_chat
+        else:
+            endpoint_name = self.routes.storyteller_narration_chat or self.routes.storyteller_chat
+
         endpoint = self.chat_endpoints[endpoint_name]
         provider = self.providers[endpoint.provider]
         return endpoint_name, endpoint, provider

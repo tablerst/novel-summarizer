@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from loguru import logger
+from sqlalchemy import text as sa_text
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -34,6 +35,25 @@ class DatabaseService:
         import_all_models()
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            try:
+                await conn.execute(
+                    sa_text(
+                        """
+                        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
+                        USING fts5(chunk_id UNINDEXED, book_id UNINDEXED, chapter_idx UNINDEXED, chapter_title, text);
+                        """
+                    )
+                )
+                await conn.execute(
+                    sa_text(
+                        """
+                        CREATE VIRTUAL TABLE IF NOT EXISTS narrations_fts
+                        USING fts5(narration_id UNINDEXED, book_id UNINDEXED, chapter_idx UNINDEXED, chapter_title, text);
+                        """
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("FTS5 init skipped: {}", exc)
 
     @asynccontextmanager
     async def with_session(self) -> AsyncGenerator[AsyncSession, None]:

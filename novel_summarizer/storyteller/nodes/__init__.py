@@ -1,6 +1,7 @@
 """Storyteller graph nodes."""
 
 from novel_summarizer.storyteller.nodes import (
+    consistency_check,
     entity_extract,
     memory_commit,
     memory_retrieve,
@@ -10,6 +11,7 @@ from novel_summarizer.storyteller.nodes import (
 )
 
 __all__ = [
+    "consistency_check",
     "entity_extract",
     "state_lookup",
     "memory_retrieve",

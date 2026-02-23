@@ -53,6 +53,8 @@ llm:
   routes:
     summarize_chat: "summarize_default"
     storyteller_chat: "storyteller_default"
+    storyteller_entity_chat: "storyteller_default"
+    storyteller_narration_chat: "storyteller_default"
     embedding: "embedding_default"
 
 summarize:
