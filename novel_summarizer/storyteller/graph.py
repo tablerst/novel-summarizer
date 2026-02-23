@@ -3,6 +3,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from novel_summarizer.config.schema import AppConfigRoot
+from novel_summarizer.llm.factory import OpenAIChatClient
 from novel_summarizer.storyteller.nodes import (
     entity_extract,
     memory_commit,
@@ -15,11 +16,17 @@ from novel_summarizer.storyteller.state import StorytellerState
 from novel_summarizer.storage.repo import SQLAlchemyRepo
 
 
-def build_storyteller_graph(*, repo: SQLAlchemyRepo, config: AppConfigRoot, book_id: int):
+def build_storyteller_graph(
+    *,
+    repo: SQLAlchemyRepo,
+    config: AppConfigRoot,
+    book_id: int,
+    llm_client: OpenAIChatClient | None = None,
+):
     workflow = StateGraph(StorytellerState)
 
     async def _entity_extract(state: StorytellerState) -> dict:
-        return await entity_extract.run(state, config=config)
+        return await entity_extract.run(state, config=config, llm_client=llm_client)
 
     async def _state_lookup(state: StorytellerState) -> dict:
         return await state_lookup.run(state, repo=repo, config=config, book_id=book_id)
@@ -28,7 +35,7 @@ def build_storyteller_graph(*, repo: SQLAlchemyRepo, config: AppConfigRoot, book
         return await memory_retrieve.run(state, config=config, book_id=book_id)
 
     async def _storyteller_generate(state: StorytellerState) -> dict:
-        return await storyteller_generate.run(state, config=config)
+        return await storyteller_generate.run(state, config=config, llm_client=llm_client)
 
     async def _state_update(state: StorytellerState) -> dict:
         return await state_update.run(state, repo=repo, config=config, book_id=book_id)
