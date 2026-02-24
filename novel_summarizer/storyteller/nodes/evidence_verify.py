@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from loguru import logger
+
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.storyteller.state import StorytellerState
 
@@ -109,86 +111,111 @@ def _build_sources(state: StorytellerState, max_snippets: int) -> list[dict[str,
 
 
 async def run(state: StorytellerState, *, config: AppConfigRoot) -> dict:
-    min_score = float(config.storyteller.evidence_min_support_score)
-    sources = _build_sources(state, max_snippets=int(config.storyteller.evidence_max_snippets))
+    node_log = logger.bind(
+        node="evidence_verify",
+        chapter_id=state.get("chapter_id"),
+        chapter_idx=state.get("chapter_idx"),
+    )
+    try:
+        min_score = float(config.storyteller.evidence_min_support_score)
+        sources = _build_sources(state, max_snippets=int(config.storyteller.evidence_max_snippets))
 
-    warnings = list(state.get("consistency_warnings") or [])
-    actions = list(state.get("consistency_actions") or [])
+        warnings = list(state.get("consistency_warnings") or [])
+        actions = list(state.get("consistency_actions") or [])
 
-    supported_events: list[dict[str, Any]] = []
-    supported_updates: list[dict[str, Any]] = []
-    supported_items: list[dict[str, Any]] = []
+        supported_events: list[dict[str, Any]] = []
+        supported_updates: list[dict[str, Any]] = []
+        supported_items: list[dict[str, Any]] = []
 
-    total_claims = 0
-    supported_claims = 0
+        total_claims = 0
+        supported_claims = 0
 
-    for event in state.get("key_events", []):
-        total_claims += 1
-        claim_text = _claim_text_from_event(event)
-        key_phrases = [
-            _normalize(event.get("what")),
-        ]
-        score, source_type, snippet = _best_support_score(claim_text, sources, key_phrases=key_phrases)
-        if score < min_score:
-            warnings.append(f"Evidence rejected key_event: {event.get('what', '')}")
-            continue
-        supported_claims += 1
-        enriched = dict(event)
-        enriched["evidence_source_type"] = source_type
-        enriched["evidence_quote"] = snippet
-        enriched["evidence_score"] = round(score, 4)
-        supported_events.append(enriched)
+        node_log.debug(
+            "Running evidence verification key_events={} character_updates={} new_items={} sources={} threshold={}",
+            len(state.get("key_events", [])),
+            len(state.get("character_updates", [])),
+            len(state.get("new_items", [])),
+            len(sources),
+            min_score,
+        )
 
-    for update in state.get("character_updates", []):
-        total_claims += 1
-        claim_text = _claim_text_from_update(update)
-        key_phrases = [
-            _normalize(update.get("evidence")),
-            _normalize(update.get("after")),
-        ]
-        score, source_type, snippet = _best_support_score(claim_text, sources, key_phrases=key_phrases)
-        if score < min_score:
-            warnings.append(f"Evidence rejected character_update: {update.get('name', '')}")
-            continue
-        supported_claims += 1
-        enriched = dict(update)
-        enriched["evidence_source_type"] = source_type
-        enriched["evidence_quote"] = snippet
-        enriched["evidence_score"] = round(score, 4)
-        supported_updates.append(enriched)
+        for event in state.get("key_events", []):
+            total_claims += 1
+            claim_text = _claim_text_from_event(event)
+            key_phrases = [
+                _normalize(event.get("what")),
+            ]
+            score, source_type, snippet = _best_support_score(claim_text, sources, key_phrases=key_phrases)
+            if score < min_score:
+                warnings.append(f"Evidence rejected key_event: {event.get('what', '')}")
+                continue
+            supported_claims += 1
+            enriched = dict(event)
+            enriched["evidence_source_type"] = source_type
+            enriched["evidence_quote"] = snippet
+            enriched["evidence_score"] = round(score, 4)
+            supported_events.append(enriched)
 
-    for item in state.get("new_items", []):
-        total_claims += 1
-        claim_text = _claim_text_from_item(item)
-        key_phrases = [
-            _normalize(item.get("name")),
-            _normalize(item.get("description")),
-            _normalize(item.get("owner")),
-        ]
-        score, source_type, snippet = _best_support_score(claim_text, sources, key_phrases=key_phrases)
-        if score < min_score:
-            warnings.append(f"Evidence rejected new_item: {item.get('name', '')}")
-            continue
-        supported_claims += 1
-        enriched = dict(item)
-        enriched["evidence_source_type"] = source_type
-        enriched["evidence_quote"] = snippet
-        enriched["evidence_score"] = round(score, 4)
-        supported_items.append(enriched)
+        for update in state.get("character_updates", []):
+            total_claims += 1
+            claim_text = _claim_text_from_update(update)
+            key_phrases = [
+                _normalize(update.get("evidence")),
+                _normalize(update.get("after")),
+            ]
+            score, source_type, snippet = _best_support_score(claim_text, sources, key_phrases=key_phrases)
+            if score < min_score:
+                warnings.append(f"Evidence rejected character_update: {update.get('name', '')}")
+                continue
+            supported_claims += 1
+            enriched = dict(update)
+            enriched["evidence_source_type"] = source_type
+            enriched["evidence_quote"] = snippet
+            enriched["evidence_score"] = round(score, 4)
+            supported_updates.append(enriched)
 
-    unsupported_claims = max(0, total_claims - supported_claims)
-    if unsupported_claims > 0:
-        actions.append(f"Evidence filtered unsupported claims: {unsupported_claims}")
+        for item in state.get("new_items", []):
+            total_claims += 1
+            claim_text = _claim_text_from_item(item)
+            key_phrases = [
+                _normalize(item.get("name")),
+                _normalize(item.get("description")),
+                _normalize(item.get("owner")),
+            ]
+            score, source_type, snippet = _best_support_score(claim_text, sources, key_phrases=key_phrases)
+            if score < min_score:
+                warnings.append(f"Evidence rejected new_item: {item.get('name', '')}")
+                continue
+            supported_claims += 1
+            enriched = dict(item)
+            enriched["evidence_source_type"] = source_type
+            enriched["evidence_quote"] = snippet
+            enriched["evidence_score"] = round(score, 4)
+            supported_items.append(enriched)
 
-    return {
-        "key_events": supported_events,
-        "character_updates": supported_updates,
-        "new_items": supported_items,
-        "consistency_warnings": warnings,
-        "consistency_actions": actions,
-        "evidence_report": {
-            "total_claims": total_claims,
-            "supported_claims": supported_claims,
-            "unsupported_claims": unsupported_claims,
-        },
-    }
+        unsupported_claims = max(0, total_claims - supported_claims)
+        if unsupported_claims > 0:
+            actions.append(f"Evidence filtered unsupported claims: {unsupported_claims}")
+
+        node_log.info(
+            "Evidence verification completed total_claims={} supported={} unsupported={}",
+            total_claims,
+            supported_claims,
+            unsupported_claims,
+        )
+
+        return {
+            "key_events": supported_events,
+            "character_updates": supported_updates,
+            "new_items": supported_items,
+            "consistency_warnings": warnings,
+            "consistency_actions": actions,
+            "evidence_report": {
+                "total_claims": total_claims,
+                "supported_claims": supported_claims,
+                "unsupported_claims": unsupported_claims,
+            },
+        }
+    except Exception:
+        node_log.exception("Evidence verification node failed")
+        raise

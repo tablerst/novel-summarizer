@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from novel_summarizer.export.markdown import (
     _render_book_summary,
-    _render_characters,
+    _render_legacy_characters,
+    _render_storyteller_characters,
     _safe_filename,
     _render_story,
-    _render_timeline,
+    _render_legacy_timeline,
+    _render_storyteller_timeline,
     _safe_load_json,
 )
 
@@ -26,12 +28,12 @@ def test_render_book_summary_default_title() -> None:
 
 
 def test_render_characters_empty() -> None:
-    rendered = _render_characters([])
+    rendered = _render_storyteller_characters([])
     assert "暂无人物数据" in rendered
 
 
 def test_render_timeline_includes_chapter_and_impact() -> None:
-    rendered = _render_timeline(
+    rendered = _render_legacy_timeline(
         [
             {"chapter_idx": 2, "event": "冲突爆发", "impact": "主角受伤"},
             {"event": "小结"},
@@ -48,7 +50,7 @@ def test_render_story_empty() -> None:
 
 
 def test_render_characters_world_state_shape() -> None:
-    rendered = _render_characters(
+    rendered = _render_storyteller_characters(
         [
             {
                 "canonical_name": "韩立",
@@ -66,12 +68,30 @@ def test_render_characters_world_state_shape() -> None:
 
 
 def test_render_timeline_supports_event_summary_field() -> None:
-    rendered = _render_timeline(
+    rendered = _render_storyteller_timeline(
         [
             {"chapter_idx": 3, "event_summary": "秘境开启", "impact": "势力重排"},
         ]
     )
     assert "[第3章] 秘境开启（影响：势力重排）" in rendered
+
+
+def test_render_legacy_characters_shape() -> None:
+    rendered = _render_legacy_characters(
+        [
+            {
+                "name": "韩立",
+                "aliases": ["韩跑跑"],
+                "relationships": "同门:厉飞雨",
+                "motivation": "求长生",
+                "changes": "境界突破",
+            }
+        ]
+    )
+    assert "韩立" in rendered
+    assert "韩跑跑" in rendered
+    assert "同门:厉飞雨" in rendered
+    assert "境界突破" in rendered
 
 
 def test_safe_filename_replaces_invalid_chars() -> None:

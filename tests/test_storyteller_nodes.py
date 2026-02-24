@@ -18,6 +18,25 @@ class _FakeLLMClient:
         return None, parser(text)
 
 
+class _FakeStructuredLLMClient:
+    model_identifier = "fake/provider/model"
+
+    def __init__(self) -> None:
+        self.structured_calls = 0
+
+    def complete_structured(self, system_prompt, user_prompt, cache_key, schema, *, method="function_calling"):
+        _ = (system_prompt, user_prompt, cache_key, method)
+        self.structured_calls += 1
+        return None, schema.model_validate(
+            {
+                "characters": ["韩立", "韩立"],
+                "locations": ["天南"],
+                "items": ["掌天瓶"],
+                "key_phrases": ["筑基"],
+            }
+        )
+
+
 def test_safe_load_json_dict_parses_code_fence() -> None:
     payload = """```json
     {"narration":"ok"}
@@ -42,6 +61,24 @@ def test_entity_extract_uses_llm_and_normalizes() -> None:
     assert result["entities_mentioned"] == ["韩立"]
     assert result["locations_mentioned"] == ["天南"]
     assert result["items_mentioned"] == ["掌天瓶"]
+
+
+def test_entity_extract_prefers_structured_output_when_available() -> None:
+    config = AppConfigRoot()
+    state = cast(
+        StorytellerState,
+        {
+            "chapter_id": 1,
+            "chapter_idx": 1,
+            "chapter_title": "第1章",
+            "chapter_text": "韩立在天南得到掌天瓶。",
+        },
+    )
+    client = _FakeStructuredLLMClient()
+    result = asyncio.run(entity_extract.run(state, config=config, llm_client=client))
+
+    assert client.structured_calls == 1
+    assert result["entities_mentioned"] == ["韩立"]
 
 
 def test_memory_retrieve_filters_future_and_current(monkeypatch) -> None:

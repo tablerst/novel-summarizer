@@ -32,14 +32,14 @@ async def ingest_book(
     author: str | None = None,
     chapter_regex_override: str | None = None,
 ) -> IngestStats:
-    logger.info("Reading novel text from %s", input_path)
+    logger.info("Reading novel text from {}", input_path)
     raw_text = load_text(input_path, config.ingest.encoding)
     normalized = normalize_text(raw_text, config.ingest.cleanup)
 
     book_hash_value = compute_book_hash(normalized)
     chapter_regex = chapter_regex_override or config.ingest.chapter_regex
     chapters = parse_chapters(normalized, chapter_regex)
-    logger.info("Parsed %d chapters", len(chapters))
+    logger.info("Parsed {} chapters", len(chapters))
 
     split_params = (
         f"size={config.split.chunk_size_tokens};"

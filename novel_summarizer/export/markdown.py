@@ -4,6 +4,7 @@ from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from typing import Literal
 import re
 
 import orjson
@@ -20,7 +21,7 @@ class ExportResult:
     characters_path: Path
     timeline_path: Path
     story_path: Path
-    mode: str = "legacy"
+    mode: str = "storyteller"
     chapters_dir: Path | None = None
     full_story_path: Path | None = None
     world_state_path: Path | None = None
@@ -73,7 +74,7 @@ def _render_story(story: str | None) -> str:
     return f"# 说书稿\n\n{story}\n"
 
 
-def _render_characters(characters: list[dict[str, Any]]) -> str:
+def _render_storyteller_characters(characters: list[dict[str, Any]]) -> str:
     if not characters:
         return "# 人物表\n\n暂无人物数据。\n"
 
@@ -84,24 +85,65 @@ def _render_characters(characters: list[dict[str, Any]]) -> str:
         "| --- | --- | --- | --- | --- |",
     ]
     for item in characters:
-        name = str(item.get("name") or item.get("canonical_name") or "")
-        aliases = ", ".join(_coerce_list(item.get("aliases") or item.get("aliases_json")))
-        relations = str(item.get("relationships") or item.get("relationships_json") or "")
+        name = str(item.get("canonical_name") or "")
+        aliases = ", ".join(_coerce_list(item.get("aliases_json")))
+        relations = str(item.get("relationships_json") or "")
         motivation = str(item.get("motivation") or "")
-        changes = str(item.get("changes") or item.get("status") or "")
+        changes = str(item.get("status") or "")
         lines.append(f"| {name} | {aliases} | {relations} | {motivation} | {changes} |")
     lines.append("")
     return "\n".join(lines)
 
 
-def _render_timeline(events: list[dict[str, Any]]) -> str:
+def _render_legacy_characters(characters: list[dict[str, Any]]) -> str:
+    if not characters:
+        return "# 人物表\n\n暂无人物数据。\n"
+
+    lines = [
+        "# 人物表",
+        "",
+        "| 姓名 | 别名 | 关系 | 动机/目标 | 变化 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in characters:
+        name = str(item.get("name") or "")
+        aliases = ", ".join(_coerce_list(item.get("aliases")))
+        relations = str(item.get("relationships") or "")
+        motivation = str(item.get("motivation") or "")
+        changes = str(item.get("changes") or "")
+        lines.append(f"| {name} | {aliases} | {relations} | {motivation} | {changes} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_storyteller_timeline(events: list[dict[str, Any]]) -> str:
     if not events:
         return "# 时间线\n\n暂无事件数据。\n"
 
     lines = ["# 时间线", ""]
     for idx, event in enumerate(events, start=1):
         chapter_idx = event.get("chapter_idx")
-        event_text = str(event.get("event") or event.get("event_summary") or "")
+        event_text = str(event.get("event_summary") or "")
+        impact = str(event.get("impact", ""))
+        prefix = f"{idx}. "
+        if chapter_idx is not None:
+            prefix += f"[第{chapter_idx}章] "
+        line = f"{prefix}{event_text}"
+        if impact:
+            line += f"（影响：{impact}）"
+        lines.append(line)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_legacy_timeline(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return "# 时间线\n\n暂无事件数据。\n"
+
+    lines = ["# 时间线", ""]
+    for idx, event in enumerate(events, start=1):
+        chapter_idx = event.get("chapter_idx")
+        event_text = str(event.get("event") or "")
         impact = str(event.get("impact", ""))
         prefix = f"{idx}. "
         if chapter_idx is not None:
@@ -162,8 +204,8 @@ async def _export_storyteller_outputs(
     book_summary_path = output_dir / "book_summary.md"
     world_state_path = output_dir / "world_state.json"
 
-    characters_path.write_text(_render_characters(characters), encoding="utf-8")
-    timeline_path.write_text(_render_timeline(events), encoding="utf-8")
+    characters_path.write_text(_render_storyteller_characters(characters), encoding="utf-8")
+    timeline_path.write_text(_render_storyteller_timeline(events), encoding="utf-8")
     summary_text = f"共导出 {len(narrations)} 章说书稿。"
     book_summary_path.write_text(_render_book_summary(book_title, summary_text), encoding="utf-8")
     world_state_path.write_text(
@@ -202,7 +244,7 @@ async def _export_legacy_outputs(*, repo: SQLAlchemyRepo, book_id: int, output_d
     story_row = await repo.get_latest_summary("book", book_id, "story")
 
     if not book_summary_row:
-        raise ValueError("No storyteller narrations or legacy book summary found. Run storytell or summarize first.")
+        raise ValueError("No legacy book summary found. Run `summarize` first or switch to `--mode storyteller`.")
 
     book_summary_obj = _safe_load_json(book_summary_row.content)
     if isinstance(book_summary_obj, dict):
@@ -236,8 +278,8 @@ async def _export_legacy_outputs(*, repo: SQLAlchemyRepo, book_id: int, output_d
     story_path = output_dir / "story.md"
 
     book_summary_path.write_text(_render_book_summary(book_title, summary_text), encoding="utf-8")
-    characters_path.write_text(_render_characters(characters), encoding="utf-8")
-    timeline_path.write_text(_render_timeline(events), encoding="utf-8")
+    characters_path.write_text(_render_legacy_characters(characters), encoding="utf-8")
+    timeline_path.write_text(_render_legacy_timeline(events), encoding="utf-8")
     story_path.write_text(_render_story(story_text), encoding="utf-8")
 
     return ExportResult(
@@ -250,7 +292,11 @@ async def _export_legacy_outputs(*, repo: SQLAlchemyRepo, book_id: int, output_d
     )
 
 
-async def export_book_markdown(book_id: int, config: AppConfigRoot) -> ExportResult:
+async def export_book_markdown(
+    book_id: int,
+    config: AppConfigRoot,
+    mode: Literal["storyteller", "legacy", "auto"] = "storyteller",
+) -> ExportResult:
     output_root = config.app.output_dir
     async with session_scope() as session:
         repo = SQLAlchemyRepo(session)
@@ -259,6 +305,26 @@ async def export_book_markdown(book_id: int, config: AppConfigRoot) -> ExportRes
         output_dir.mkdir(parents=True, exist_ok=True)
 
         narrations = await repo.list_narrations_by_book(book_id)
+        if mode == "storyteller":
+            if not narrations:
+                raise ValueError(
+                    "No storyteller narrations found. Use `--mode legacy` to export v1 summaries if available."
+                )
+            return await _export_storyteller_outputs(
+                repo=repo,
+                book_id=book_id,
+                output_dir=output_dir,
+                book_title=book.title,
+            )
+
+        if mode == "legacy":
+            return await _export_legacy_outputs(
+                repo=repo,
+                book_id=book_id,
+                output_dir=output_dir,
+                book_title=book.title,
+            )
+
         if narrations:
             return await _export_storyteller_outputs(
                 repo=repo,

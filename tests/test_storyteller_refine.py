@@ -17,6 +17,18 @@ class _FakeLLMClient:
         return object(), payload
 
 
+class _FakeStructuredLLMClient:
+    model_identifier = "fake/provider/refine-model"
+
+    def __init__(self) -> None:
+        self.structured_calls = 0
+
+    def complete_structured(self, system_prompt, user_prompt, cache_key, schema, *, method="function_calling"):
+        _ = (system_prompt, user_prompt, cache_key, method)
+        self.structured_calls += 1
+        return object(), schema.model_validate({"narration": "结构化润色后的说书稿。"})
+
+
 def test_refine_narration_disabled_keeps_text() -> None:
     config = AppConfigRoot.model_validate({"storyteller": {"refine_enabled": False}})
     state = cast(StorytellerState, {"narration": "初稿说书稿。"})
@@ -57,3 +69,14 @@ def test_refine_narration_no_client_fallback() -> None:
 
     assert result["refine_llm_calls"] == 0
     assert result["refine_llm_cache_hit"] is False
+
+
+def test_refine_narration_prefers_structured_output() -> None:
+    config = AppConfigRoot()
+    state = cast(StorytellerState, {"chapter_id": 1, "chapter_idx": 1, "narration": "初稿说书稿。"})
+    client = _FakeStructuredLLMClient()
+
+    result = asyncio.run(refine_narration.run(state, config=config, llm_client=client))
+
+    assert client.structured_calls == 1
+    assert result["narration"] == "结构化润色后的说书稿。"

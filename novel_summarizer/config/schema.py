@@ -103,7 +103,7 @@ class EmbeddingEndpointConfig(BaseModel):
 class LLMRoutesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    summarize_chat: str = "summarize_default"
+    summarize_chat: str | None = None
     storyteller_chat: str = "storyteller_default"
     storyteller_entity_chat: str | None = None
     storyteller_narration_chat: str | None = None
@@ -140,7 +140,7 @@ class LLMConfig(BaseModel):
                     f"embedding endpoint '{endpoint_name}' references unknown provider '{endpoint.provider}'"
                 )
 
-        if self.routes.summarize_chat not in self.chat_endpoints:
+        if self.routes.summarize_chat and self.routes.summarize_chat not in self.chat_endpoints:
             raise ValueError(f"llm.routes.summarize_chat not found: {self.routes.summarize_chat}")
         if self.routes.storyteller_chat not in self.chat_endpoints:
             raise ValueError(f"llm.routes.storyteller_chat not found: {self.routes.storyteller_chat}")
@@ -166,7 +166,7 @@ class LLMConfig(BaseModel):
         route: Literal["summarize", "storyteller", "storyteller_entity", "storyteller_narration", "storyteller_refine"],
     ) -> tuple[str, ChatEndpointConfig, LLMProviderConfig]:
         if route == "summarize":
-            endpoint_name = self.routes.summarize_chat
+            endpoint_name = self.routes.summarize_chat or self.routes.storyteller_chat
         elif route == "storyteller":
             endpoint_name = self.routes.storyteller_chat
         elif route == "storyteller_entity":
@@ -282,6 +282,21 @@ class CacheConfig(BaseModel):
     ttl_seconds: int = 2_592_000
 
 
+class ObservabilityConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    log_json_error_payload: bool = True
+    json_error_payload_max_chars: int = 0
+    log_retry_attempts: bool = True
+
+    @field_validator("json_error_payload_max_chars")
+    @classmethod
+    def _non_negative_chars(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("json_error_payload_max_chars must be non-negative")
+        return value
+
+
 def default_llm_config() -> LLMConfig:
     return LLMConfig.model_validate(
         {
@@ -293,14 +308,6 @@ def default_llm_config() -> LLMConfig:
                 }
             },
             "chat_endpoints": {
-                "summarize_default": {
-                    "provider": "default",
-                    "model": "gpt-4.1-mini",
-                    "temperature": 0.3,
-                    "timeout_s": 60,
-                    "max_concurrency": 6,
-                    "retries": 3,
-                },
                 "storyteller_default": {
                     "provider": "default",
                     "model": "gpt-4.1-mini",
@@ -320,7 +327,6 @@ def default_llm_config() -> LLMConfig:
                 }
             },
             "routes": {
-                "summarize_chat": "summarize_default",
                 "storyteller_chat": "storyteller_default",
                 "embedding": "embedding_default",
             },
@@ -339,6 +345,7 @@ class AppConfigRoot(BaseModel):
     storyteller: StorytellerConfig = StorytellerConfig()
     storage: StorageConfig = StorageConfig()
     cache: CacheConfig = CacheConfig()
+    observability: ObservabilityConfig = ObservabilityConfig()
 
 
 def resolve_paths(config: AppConfigRoot, base_dir: Path) -> AppConfigRoot:

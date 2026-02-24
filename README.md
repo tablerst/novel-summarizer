@@ -63,7 +63,11 @@ novel-summarizer storytell --book-id 1 --from-chapter 50 --to-chapter 100
 
 ```bash
 novel-summarizer export --book-id 1
+# 如需导出历史 v1 summaries：
+novel-summarizer export --book-id 1 --mode legacy
 ```
+
+> 默认 `--mode storyteller`，不再隐式回退到 legacy。
 
 #### 7. 一键运行（导入 + 说书 + 导出）
 
@@ -98,7 +102,7 @@ output/<book_hash>/
 - `llm.providers.*` — 提供方连接配置（base_url、api_key_env）
 - `llm.chat_endpoints.*` — Chat 端点（模型、温度、超时、重试、并发）
 - `llm.embedding_endpoints.*` — Embedding 端点（模型、超时、重试、并发）
-- `llm.routes.*` — 业务路由到端点的映射（summarize/storyteller/embedding）
+- `llm.routes.*` — 业务路由到端点的映射（storyteller/embedding；legacy summarize 可选）
 - `storyteller.*` — 风格、篇幅比例、记忆检索条目数、生成温度
 - `storage.*` — SQLite / LanceDB 路径
 - `ingest.*` — 章节正则、清洗规则、分块参数
@@ -142,4 +146,4 @@ uv run python -m ruff check .  # Lint 检查
 
 - 当前仅支持 OpenAI 兼容 API 作为 LLM 提供方。
 - 所有 LLM 调用结果按 `(prompt_version, model, input_hash)` 缓存，幂等可恢复。
-- v1（Map-Reduce 分层压缩）代码保留在 `summarize/` 模块中作为 legacy 参考。
+- `summarize` 命令为 legacy（v1 Map-Reduce），默认推荐使用 `storytell` / `run`。

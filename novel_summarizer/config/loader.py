@@ -90,7 +90,7 @@ def load_config(
     config = AppConfigRoot.model_validate(config_data)
     config = resolve_paths(config, base_dir)
 
-    logger.debug("Loaded config from %s", base_dir)
+    logger.debug("Loaded config from {}", base_dir)
     return config
 
 

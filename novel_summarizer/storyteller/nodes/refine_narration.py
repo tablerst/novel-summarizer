@@ -4,6 +4,7 @@ from typing import Any
 
 import orjson
 from loguru import logger
+from pydantic import BaseModel, ConfigDict
 
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.domain.hashing import sha256_text
@@ -11,6 +12,12 @@ from novel_summarizer.llm.factory import make_cache_key
 from novel_summarizer.storyteller.json_utils import safe_load_json_dict
 from novel_summarizer.storyteller.prompts.refine import REFINE_PROMPT_VERSION, refine_prompt
 from novel_summarizer.storyteller.state import StorytellerState
+
+
+class RefineOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    narration: str = ""
 
 
 def _estimate_tokens(text: str) -> int:
@@ -78,7 +85,17 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             input_hash,
             str(config.storyteller.refine_temperature),
         )
-        llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+        if hasattr(llm_client, "complete_structured"):
+            llm_response, payload_obj = llm_client.complete_structured(
+                system,
+                user,
+                cache_key,
+                RefineOutput,
+                method="function_calling",
+            )
+            payload = payload_obj.model_dump(mode="python")
+        else:
+            llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
         cache_hit = bool(getattr(llm_response, "cached", False))
         refined = _normalize_text(payload.get("narration")) or narration
 

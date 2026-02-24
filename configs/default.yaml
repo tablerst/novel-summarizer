@@ -3,6 +3,11 @@ app:
   output_dir: "./output"
   log_level: "INFO"
 
+observability:
+  log_json_error_payload: true
+  json_error_payload_max_chars: 0
+  log_retry_attempts: true
+
 ingest:
   encoding: "utf-8"
   chapter_regex: "^第[0-9一二三四五六七八九十百千]+章.*$"
@@ -27,13 +32,6 @@ llm:
       api_key_env: null
 
   chat_endpoints:
-    summarize_default:
-      provider: "deepseek"
-      model: "deepseek-chat"
-      temperature: 0.1
-      timeout_s: 60
-      max_concurrency: 6
-      retries: 3
     storyteller_default:
       provider: "deepseek"
       model: "deepseek-chat"
@@ -51,22 +49,11 @@ llm:
       retries: 3
 
   routes:
-    summarize_chat: "summarize_default"
     storyteller_chat: "storyteller_default"
     storyteller_entity_chat: "storyteller_default"
     storyteller_narration_chat: "storyteller_default"
     storyteller_refine_chat: "storyteller_default"
     embedding: "embedding_default"
-
-summarize:
-  language: "zh"
-  style: "清晰、克制、不剧透关键反转（可配置）"
-  chapter_summary_words: [200, 500]
-  book_summary_words: [800, 1500]
-  include_quotes: false
-  with_citations:
-    enabled: true
-    top_k: 6
 
 storyteller:
   language: "zh"

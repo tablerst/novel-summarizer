@@ -181,6 +181,39 @@ def test_llm_route_storyteller_node_specific_fallback() -> None:
     assert endpoint_name_refine == config.llm.routes.storyteller_chat
 
 
+def test_observability_config_defaults_and_validation() -> None:
+    config = AppConfigRoot()
+    assert config.observability.log_json_error_payload is True
+    assert config.observability.json_error_payload_max_chars == 0
+    assert config.observability.log_retry_attempts is True
+
+    with pytest.raises(ValidationError):
+        AppConfigRoot.model_validate(
+            {
+                "observability": {
+                    "json_error_payload_max_chars": -1,
+                }
+            }
+        )
+
+
+def test_default_llm_config_is_v2_focused() -> None:
+    config = AppConfigRoot()
+
+    assert "storyteller_default" in config.llm.chat_endpoints
+    assert "summarize_default" not in config.llm.chat_endpoints
+    assert config.llm.routes.summarize_chat is None
+
+
+def test_llm_route_summarize_falls_back_to_storyteller() -> None:
+    config = AppConfigRoot()
+
+    endpoint_name, endpoint, _ = config.llm.resolve_chat_route("summarize")
+
+    assert endpoint_name == config.llm.routes.storyteller_chat
+    assert endpoint.model == config.llm.chat_endpoints[config.llm.routes.storyteller_chat].model
+
+
 def test_llm_route_storyteller_node_specific_override() -> None:
     custom = AppConfigRoot.model_validate(
         {

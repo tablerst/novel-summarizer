@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 from rich.console import Console
 from rich.panel import Panel
@@ -41,7 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--author", type=str, default=None, help="Book author")
     ingest_parser.add_argument("--chapter-regex", type=str, default=None, help="Override chapter regex")
 
-    summarize_parser = subparsers.add_parser("summarize", help="Generate chunk and chapter summaries")
+    summarize_parser = subparsers.add_parser("summarize", help="LEGACY: Generate v1 map-reduce summaries")
     summarize_parser.add_argument("--book-id", type=int, required=True, help="Book id to summarize")
     summarize_parser.add_argument("--no-export", action="store_true", help="Skip markdown export")
 
@@ -50,8 +51,14 @@ def _build_parser() -> argparse.ArgumentParser:
     storytell_parser.add_argument("--from-chapter", type=int, default=None, help="Start chapter idx (inclusive)")
     storytell_parser.add_argument("--to-chapter", type=int, default=None, help="End chapter idx (inclusive)")
 
-    export_parser = subparsers.add_parser("export", help="Export markdown outputs from stored summaries")
+    export_parser = subparsers.add_parser("export", help="Export markdown outputs from storyteller or legacy data")
     export_parser.add_argument("--book-id", type=int, required=True, help="Book id to export")
+    export_parser.add_argument(
+        "--mode",
+        choices=["storyteller", "legacy", "auto"],
+        default="storyteller",
+        help="Export mode: storyteller (default), legacy, or auto fallback",
+    )
 
     embed_parser = subparsers.add_parser("embed", help="Build LanceDB vector index for chunks")
     embed_parser.add_argument("--book-id", type=int, required=True, help="Book id to embed")
@@ -89,6 +96,11 @@ def _print_config(config) -> None:
 
 
 async def _main_async() -> None:
+    def _coerce_export_mode(value: str) -> Literal["storyteller", "legacy", "auto"]:
+        if value not in {"storyteller", "legacy", "auto"}:
+            raise ValueError(f"Unsupported export mode: {value}")
+        return value
+
     parser = _build_parser()
     args = parser.parse_args()
 
@@ -128,6 +140,13 @@ async def _main_async() -> None:
             return
 
         if args.command == "summarize":
+            console.print(
+                Panel(
+                    "Legacy command: `summarize` belongs to v1 map-reduce pipeline. "
+                    "Prefer `storytell`/`run` for the current default workflow.",
+                    title="Legacy Notice",
+                )
+            )
             stats = await summarize_book(book_id=args.book_id, config=config)
             table = Table(title="Summarize Summary", show_header=True, header_style="bold")
             table.add_column("Metric")
@@ -142,7 +161,7 @@ async def _main_async() -> None:
             console.print(table)
 
             if not args.no_export:
-                export_result = await export_book_markdown(book_id=args.book_id, config=config)
+                export_result = await export_book_markdown(book_id=args.book_id, config=config, mode="legacy")
                 console.print(
                     Panel(
                         f"Exported to {export_result.output_dir}",
@@ -184,7 +203,11 @@ async def _main_async() -> None:
             return
 
         if args.command == "export":
-            export_result = await export_book_markdown(book_id=args.book_id, config=config)
+            export_result = await export_book_markdown(
+                book_id=args.book_id,
+                config=config,
+                mode=_coerce_export_mode(args.mode),
+            )
             console.print(
                 Panel(
                     f"Exported to {export_result.output_dir}",
@@ -235,7 +258,7 @@ async def _main_async() -> None:
 
             export_dir = "(skipped)"
             if not args.no_export:
-                export_result = await export_book_markdown(book_id=book_id, config=config)
+                export_result = await export_book_markdown(book_id=book_id, config=config, mode="storyteller")
                 export_dir = str(export_result.output_dir)
 
             table = Table(title="Run Pipeline Summary", show_header=True, header_style="bold")

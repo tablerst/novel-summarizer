@@ -165,7 +165,7 @@ def _chunk_summary(
         str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
-    logger.debug("Chunk summary cached=%s", response.cached)
+    logger.debug("Chunk summary cached={}", response.cached)
     return summary_obj
 
 
@@ -194,7 +194,7 @@ def _chapter_summary(
         str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
-    logger.debug("Chapter summary cached=%s", response.cached)
+    logger.debug("Chapter summary cached={}", response.cached)
     return summary_obj
 
 
@@ -223,7 +223,7 @@ def _book_summary(
         str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
-    logger.debug("Book summary cached=%s", response.cached)
+    logger.debug("Book summary cached={}", response.cached)
     return summary_obj
 
 
@@ -254,7 +254,7 @@ def _story_summary(
         str(client.runtime.temperature),
     )
     response, summary_obj = client.complete_json(system, user, cache_key, _safe_load_json)
-    logger.debug("Story summary cached=%s", response.cached)
+    logger.debug("Story summary cached={}", response.cached)
     return summary_obj
 
 

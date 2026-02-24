@@ -68,6 +68,7 @@ async def storytell_book(
     to_chapter: int | None = None,
 ) -> StorytellStats:
     started_at = time.perf_counter()
+    run_log = logger.bind(node="storyteller_service", chapter_id="-", chapter_idx="-")
     chapters_processed = 0
     chapters_skipped = 0
     llm_calls_estimated = 0
@@ -92,17 +93,17 @@ async def storytell_book(
         narration_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_narration")
         model_identifier = narration_llm_client.model_identifier
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Storyteller narration LLM disabled; fallback mode enabled: {}", exc)
+        run_log.warning("Storyteller narration LLM disabled; fallback mode enabled: {}", exc)
 
     try:
         entity_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_entity")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Storyteller entity LLM disabled; extraction fallback mode enabled: {}", exc)
+        run_log.warning("Storyteller entity LLM disabled; extraction fallback mode enabled: {}", exc)
 
     try:
         refine_llm_client = OpenAIChatClient(config=config, cache=cache, route="storyteller_refine")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Storyteller refine LLM disabled; refine fallback mode enabled: {}", exc)
+        run_log.warning("Storyteller refine LLM disabled; refine fallback mode enabled: {}", exc)
 
     try:
         async with session_scope() as session:
@@ -112,7 +113,7 @@ async def storytell_book(
                 try:
                     await prepare_retrieval_assets(book_id=book_id, config=config)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Retrieval assets prebuild failed for storyteller retrieval: {}", exc)
+                    run_log.warning("Retrieval assets prebuild failed for storyteller retrieval: {}", exc)
 
             chapters = await repo.list_chapters(book_id)
             selected_chapters = _filter_chapters(chapters, from_chapter=from_chapter, to_chapter=to_chapter)
@@ -124,10 +125,13 @@ async def storytell_book(
                 narration_llm_client=narration_llm_client,
                 refine_llm_client=refine_llm_client,
             )
+            run_log.info("Storyteller chapter loop started book_id={} chapters_selected={}", book_id, len(selected_chapters))
 
             for chapter in selected_chapters:
+                chapter_log = run_log.bind(chapter_id=chapter.id, chapter_idx=chapter.idx)
                 chapter_text = await _chapter_text(repo, chapter.id)
                 if not chapter_text:
+                    chapter_log.warning("Chapter text empty; skipped")
                     chapters_skipped += 1
                     continue
 
@@ -145,6 +149,7 @@ async def storytell_book(
                     input_hash=input_hash,
                 )
                 if existing is not None:
+                    chapter_log.info("Narration already exists for current input hash; skipped")
                     chapters_skipped += 1
                     continue
 
@@ -155,11 +160,16 @@ async def storytell_book(
                     "chapter_title": chapter.title,
                     "chapter_text": chapter_text,
                 }
-                final_state = await graph.ainvoke(state)
+                chapter_log.debug("Invoking storyteller graph")
+                try:
+                    final_state = await graph.ainvoke(state)
+                except Exception:
+                    chapter_log.exception("Storyteller graph invocation failed")
+                    raise
 
                 narration = str(final_state.get("narration") or "").strip()
                 if not narration:
-                    logger.warning("No narration generated for chapter_id=%s", chapter.id)
+                    chapter_log.warning("No narration generated")
                     chapters_skipped += 1
                     continue
 
@@ -196,6 +206,16 @@ async def storytell_book(
                 evidence_supported_claims += int(evidence_report.get("supported_claims") or 0)
                 evidence_unsupported_claims += int(evidence_report.get("unsupported_claims") or 0)
                 chapters_processed += 1
+                chapter_log.info(
+                    "Chapter narration persisted key_events={} llm_calls={} cache_hits={} warnings={} actions={}",
+                    len(key_events),
+                    entity_calls + narration_calls + refine_calls,
+                    int(bool(final_state.get("entity_llm_cache_hit")))
+                    + int(bool(final_state.get("narration_llm_cache_hit")))
+                    + int(bool(final_state.get("refine_llm_cache_hit"))),
+                    len(final_state.get("consistency_warnings") or []),
+                    len(final_state.get("consistency_actions") or []),
+                )
     finally:
         cache.close()
 

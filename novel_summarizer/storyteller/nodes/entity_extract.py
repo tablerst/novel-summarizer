@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.domain.hashing import sha256_text
@@ -14,6 +15,15 @@ from novel_summarizer.storyteller.state import StorytellerState
 
 
 _CJK_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,8}")
+
+
+class EntityExtractOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    characters: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    items: list[str] = Field(default_factory=list)
+    key_phrases: list[str] = Field(default_factory=list)
 
 
 def _unique(values: list[str], max_items: int = 20) -> list[str]:
@@ -73,7 +83,17 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             input_hash,
             str(config.storyteller.entity_temperature),
         )
-        llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+        if hasattr(llm_client, "complete_structured"):
+            llm_response, payload_obj = llm_client.complete_structured(
+                system,
+                user,
+                cache_key,
+                EntityExtractOutput,
+                method="function_calling",
+            )
+            payload = payload_obj.model_dump(mode="python")
+        else:
+            llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
         cache_hit = bool(getattr(llm_response, "cached", False))
         return {
             "entities_mentioned": _normalize_list_field(payload, "characters", max_items=16),
