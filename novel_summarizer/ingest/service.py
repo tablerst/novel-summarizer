@@ -9,7 +9,7 @@ from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.domain.hashing import book_hash as compute_book_hash
 from novel_summarizer.domain.hashing import chapter_hash as compute_chapter_hash
 from novel_summarizer.domain.hashing import chunk_hash as compute_chunk_hash
-from novel_summarizer.ingest.parser import load_text, normalize_text, parse_chapters
+from novel_summarizer.ingest.parser import load_text_auto, normalize_text, parse_chapters
 from novel_summarizer.ingest.splitter import split_text
 from novel_summarizer.storage.db import session_scope
 from novel_summarizer.storage.repo import SQLAlchemyRepo
@@ -33,11 +33,18 @@ async def ingest_book(
     chapter_regex_override: str | None = None,
 ) -> IngestStats:
     logger.info("Reading novel text from {}", input_path)
-    raw_text = load_text(input_path, config.ingest.encoding)
-    normalized = normalize_text(raw_text, config.ingest.cleanup)
-
-    book_hash_value = compute_book_hash(normalized)
     chapter_regex = chapter_regex_override or config.ingest.chapter_regex
+    loaded_text = load_text_auto(input_path, config.ingest.encoding, chapter_regex=chapter_regex)
+    logger.info(
+        "Decoded input text encoding={} autodetected={} confidence={:.2f} replace_fallback={}",
+        loaded_text.encoding,
+        loaded_text.autodetected,
+        loaded_text.confidence,
+        loaded_text.used_replace_fallback,
+    )
+
+    normalized = normalize_text(loaded_text.text, config.ingest.cleanup)
+    book_hash_value = compute_book_hash(normalized)
     chapters = parse_chapters(normalized, chapter_regex)
     logger.info("Parsed {} chapters", len(chapters))
 

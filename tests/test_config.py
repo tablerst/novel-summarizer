@@ -205,6 +205,12 @@ def test_default_llm_config_is_v2_focused() -> None:
     assert config.llm.routes.summarize_chat is None
 
 
+def test_default_ingest_encoding_is_auto() -> None:
+    config = AppConfigRoot()
+
+    assert config.ingest.encoding == "auto"
+
+
 def test_llm_route_summarize_falls_back_to_storyteller() -> None:
     config = AppConfigRoot()
 

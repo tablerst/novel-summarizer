@@ -9,7 +9,7 @@ observability:
   log_retry_attempts: true
 
 ingest:
-  encoding: "utf-8"
+  encoding: "auto"
   chapter_regex: "^第[0-9一二三四五六七八九十百千]+章.*$"
   cleanup:
     strip_blank_lines: true

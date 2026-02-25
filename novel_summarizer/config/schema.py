@@ -24,7 +24,7 @@ class IngestCleanupConfig(BaseModel):
 class IngestConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    encoding: str = "utf-8"
+    encoding: str = "auto"
     chapter_regex: str | None = None
     cleanup: IngestCleanupConfig = IngestCleanupConfig()
 

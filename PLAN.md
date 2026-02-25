@@ -473,7 +473,7 @@ app:
   log_level: "INFO"
 
 ingest:
-  encoding: "utf-8"
+  encoding: "auto"             # auto-detect common encodings (utf-8/gb18030/big5/...)
   chapter_regex: "^第[0-9一二三四五六七八九十百千]+章.*$"
   cleanup:
     strip_blank_lines: true
