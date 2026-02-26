@@ -108,7 +108,10 @@ def _build_chat_model(runtime: ResolvedChatRuntime) -> ChatOpenAI:
         "model": runtime.model,
         "temperature": runtime.temperature,
         "timeout": runtime.timeout_s,
-        "max_retries": runtime.retries,
+        # Retry is handled explicitly in OpenAIChatClient to keep attempt count predictable.
+        # Keeping SDK retries enabled here multiplies retries (SDK * wrapper) and can
+        # dramatically increase latency under provider instability.
+        "max_retries": 0,
     }
 
     if runtime.base_url:
@@ -318,6 +321,7 @@ class OpenAIChatClient:
         attempts = max(1, self.runtime.retries + 1)
         last_exc: Exception | None = None
         for attempt in range(attempts):
+            attempt_started = time.perf_counter()
             try:
                 response = self.model.invoke([SystemMessage(system_prompt), HumanMessage(user_prompt)])
                 text = str(response.content).strip()
@@ -343,6 +347,7 @@ class OpenAIChatClient:
                 return text, parsed
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
                 log = logger.bind(
                     **self._build_log_context(
                         cache_key=cache_key,
@@ -353,7 +358,8 @@ class OpenAIChatClient:
                 )
                 if self.config.observability.log_retry_attempts:
                     log.warning(
-                        "LLM call failed error_type={} error={}",
+                        "LLM call failed elapsed_ms={} error_type={} error={}",
+                        elapsed_ms,
                         type(exc).__name__,
                         exc,
                     )
@@ -394,6 +400,7 @@ class OpenAIChatClient:
             raise RuntimeError("Structured output is not supported by current model client")
 
         for attempt in range(attempts):
+            attempt_started = time.perf_counter()
             try:
                 response = structured_model.invoke([SystemMessage(system_prompt), HumanMessage(user_prompt)])
 
@@ -418,6 +425,20 @@ class OpenAIChatClient:
                     parsed_payload = response.get("parsed")
 
                 if parsed_payload is None:
+                    if isinstance(response, dict):
+                        raw_payload = _coerce_payload_text(response.get("raw"))
+                        if raw_payload:
+                            self._log_json_parse_failure(
+                                source="structured_response_empty_parsed",
+                                raw_text=raw_payload,
+                                exc=ValueError("Empty structured output response"),
+                                cache_key=cache_key,
+                                context=self._build_log_context(
+                                    attempt=attempt + 1,
+                                    attempts_total=attempts,
+                                    context=context,
+                                ),
+                            )
                     raise ValueError("Empty structured output response")
 
                 if isinstance(parsed_payload, schema):
@@ -425,6 +446,7 @@ class OpenAIChatClient:
                 return schema.model_validate(parsed_payload)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
                 log = logger.bind(
                     **self._build_log_context(
                         cache_key=cache_key,
@@ -435,7 +457,8 @@ class OpenAIChatClient:
                 )
                 if self.config.observability.log_retry_attempts:
                     log.warning(
-                        "LLM structured call failed error_type={} error={}",
+                        "LLM structured call failed elapsed_ms={} error_type={} error={}",
+                        elapsed_ms,
                         type(exc).__name__,
                         exc,
                     )

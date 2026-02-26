@@ -211,6 +211,44 @@ def test_default_ingest_encoding_is_auto() -> None:
     assert config.ingest.encoding == "auto"
 
 
+def test_storyteller_narration_preset_defaults_to_medium_ratio() -> None:
+    config = AppConfigRoot()
+
+    assert config.storyteller.narration_preset == "medium"
+    assert config.storyteller.narration_ratio == (0.4, 0.5)
+
+
+@pytest.mark.parametrize(
+    ("preset", "expected_ratio"),
+    [
+        ("short", (0.2, 0.3)),
+        ("medium", (0.4, 0.5)),
+        ("long", (0.65, 0.8)),
+    ],
+)
+def test_storyteller_narration_preset_applies_ratio(
+    preset: str,
+    expected_ratio: tuple[float, float],
+) -> None:
+    config = AppConfigRoot.model_validate({"storyteller": {"narration_preset": preset}})
+
+    assert config.storyteller.narration_ratio == expected_ratio
+
+
+def test_storyteller_narration_ratio_overrides_preset() -> None:
+    config = AppConfigRoot.model_validate(
+        {
+            "storyteller": {
+                "narration_preset": "long",
+                "narration_ratio": (0.22, 0.28),
+            }
+        }
+    )
+
+    assert config.storyteller.narration_preset == "long"
+    assert config.storyteller.narration_ratio == (0.22, 0.28)
+
+
 def test_llm_route_summarize_falls_back_to_storyteller() -> None:
     config = AppConfigRoot()
 

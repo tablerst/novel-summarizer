@@ -6,6 +6,13 @@ from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
+NARRATION_PRESET_RATIOS: dict[str, tuple[float, float]] = {
+    "short": (0.2, 0.3),
+    "medium": (0.4, 0.5),
+    "long": (0.65, 0.8),
+}
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -215,6 +222,7 @@ class StorytellerConfig(BaseModel):
 
     language: str = "zh"
     style: str = "说书人/评书艺人风格，沉浸感强，保留关键对白和心理博弈"
+    narration_preset: Literal["short", "medium", "long"] = "medium"
     narration_ratio: tuple[float, float] = (0.4, 0.5)
     narration_temperature: float = 0.45
     entity_temperature: float = 0.1
@@ -255,6 +263,22 @@ class StorytellerConfig(BaseModel):
         if not 0 <= value <= 1:
             raise ValueError("evidence_min_support_score must be between 0 and 1")
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_narration_preset(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+        # ratio has higher priority than preset when both are provided.
+        if payload.get("narration_ratio") is not None:
+            return payload
+
+        preset = str(payload.get("narration_preset", "medium"))
+        if preset in NARRATION_PRESET_RATIOS:
+            payload["narration_ratio"] = NARRATION_PRESET_RATIOS[preset]
+        return payload
 
     @field_validator("narration_ratio")
     @classmethod

@@ -58,7 +58,8 @@ llm:
 storyteller:
   language: "zh"
   style: "说书人/评书艺人风格，沉浸感强，保留关键对白和心理博弈"
-  narration_ratio: [0.4, 0.5]
+  narration_preset: "medium" # short | medium | long
+  # narration_ratio: [0.4, 0.5] # Optional explicit override, higher priority than preset.
   narration_temperature: 0.45
   entity_temperature: 0.1
   state_temperature: 0.1

@@ -2,7 +2,7 @@
 
 > **说书人风格小说解说稿生成器** — 把长篇小说逐章"重新讲一遍"，而不是压缩成干巴巴的摘要。
 
-通过 **SQLite 世界观状态** + **LanceDB 语义记忆** + **LangGraph 逐章工作流**，生成篇幅约为原著 40%–50% 的深度解说稿，保留核心情节、人物博弈和关键对白。
+通过 **SQLite 世界观状态** + **LanceDB 语义记忆** + **LangGraph 逐章工作流**，生成可按策略控制篇幅的深度解说稿（默认 `medium`：约原著 40%–50%），保留核心情节、人物博弈和关键对白。
 
 ### 快速开始
 
@@ -106,6 +106,16 @@ output/<book_hash>/
 - `storyteller.*` — 风格、篇幅比例、记忆检索条目数、生成温度
 - `storage.*` — SQLite / LanceDB 路径
 - `ingest.*` — 章节正则、清洗规则、分块参数
+
+`storyteller` 篇幅策略建议使用：
+
+- `narration_preset: short|medium|long`
+  - `short` ≈ `0.20~0.30`
+  - `medium` ≈ `0.40~0.50`（默认）
+  - `long` ≈ `0.65~0.80`
+- 若同时配置 `narration_ratio` 与 `narration_preset`，**`narration_ratio` 优先**（用于精细控制）。
+
+> 注：当 LLM 不可用并进入 fallback 时，系统会按 `narration_ratio` 上限进行截断生成，因此切换 preset/ratio 会直接影响 fallback 输出长度。
 
 环境变量用于密钥和可选 provider 级 base_url 覆盖（例如 `DEEPSEEK_API_KEY`、`NOVEL_SUMMARIZER_LLM_PROVIDER_DEEPSEEK_BASE_URL`）。
 

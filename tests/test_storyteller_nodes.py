@@ -151,5 +151,6 @@ def test_storyteller_generate_fallback_produces_narration() -> None:
     result = asyncio.run(storyteller_generate.run(state, config=config, llm_client=None))
 
     assert result["narration"]
-    assert len(result["narration"]) == 50
+    expected_len = int(len(chapter_text) * config.storyteller.narration_ratio[1])
+    assert len(result["narration"]) == expected_len
     assert isinstance(result["key_events"], list)
