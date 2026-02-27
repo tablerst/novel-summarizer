@@ -36,7 +36,7 @@ llm:
       provider: "deepseek"
       model: "deepseek-chat"
       temperature: 0.45
-      timeout_s: 60
+      timeout_s: 600
       max_concurrency: 4
       retries: 3
 

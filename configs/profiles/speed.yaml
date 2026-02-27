@@ -1,7 +1,6 @@
 llm:
   chat_endpoints:
-    storyteller_default:
-      timeout_s: 45
+    storyteller_default:      
       retries: 1
 
 storyteller:
