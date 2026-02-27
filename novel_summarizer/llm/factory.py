@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import os
 import time
@@ -150,6 +151,7 @@ class OpenAIChatClient:
         self.runtime = resolve_chat_runtime(config, route)
         self.model = _build_chat_model(self.runtime)
         self.model_identifier = f"{self.runtime.provider_name}/{self.runtime.endpoint_name}/{self.runtime.model}"
+        self._async_semaphore = asyncio.Semaphore(max(1, self.runtime.max_concurrency))
 
     def _build_log_context(
         self,
@@ -235,6 +237,24 @@ class OpenAIChatClient:
         self.cache.set(cache_key, text)
         return LLMResponse(text=text, cached=False)
 
+    async def complete_async(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        cache_key: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+    ) -> LLMResponse:
+        cached = self.cache.get(cache_key)
+        if cached.hit and cached.value is not None:
+            return LLMResponse(text=cached.value, cached=True)
+
+        text = await self._ainvoke_with_retry(system_prompt, user_prompt, cache_key=cache_key, context=context)
+        if not isinstance(text, str):
+            raise RuntimeError("Unexpected non-text response from LLM")
+        self.cache.set(cache_key, text)
+        return LLMResponse(text=text, cached=False)
+
     def complete_json(
         self,
         system_prompt: str,
@@ -263,6 +283,40 @@ class OpenAIChatClient:
                 self.cache.delete(cache_key)
 
         result = self._invoke_with_retry(system_prompt, user_prompt, parser, cache_key=cache_key, context=context)
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise RuntimeError("Unexpected non-JSON response from LLM")
+        text, parsed = result
+        self.cache.set(cache_key, text)
+        return LLMResponse(text=text, cached=False), parsed
+
+    async def complete_json_async(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        cache_key: str,
+        parser: Callable[[str], T],
+        *,
+        context: Mapping[str, Any] | None = None,
+    ) -> tuple[LLMResponse, T]:
+        cached = self.cache.get(cache_key)
+        if cached.hit and cached.value is not None:
+            try:
+                parsed = parser(cached.value)
+                return LLMResponse(text=cached.value, cached=True), parsed
+            except Exception as exc:  # noqa: BLE001
+                self._log_json_parse_failure(
+                    source="cache",
+                    raw_text=cached.value,
+                    exc=exc,
+                    cache_key=cache_key,
+                    context=context,
+                )
+                logger.bind(**self._build_log_context(cache_key=cache_key, context=context)).warning(
+                    "Deleting invalid cached LLM response"
+                )
+                self.cache.delete(cache_key)
+
+        result = await self._ainvoke_with_retry(system_prompt, user_prompt, parser, cache_key=cache_key, context=context)
         if not isinstance(result, tuple) or len(result) != 2:
             raise RuntimeError("Unexpected non-JSON response from LLM")
         text, parsed = result
@@ -308,6 +362,50 @@ class OpenAIChatClient:
         text = parsed.model_dump_json()
         self.cache.set(cache_key, text)
         return LLMResponse(text=text, cached=False), parsed
+
+    async def complete_structured_async(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        cache_key: str,
+        schema: type[S],
+        *,
+        method: Literal["function_calling", "json_schema", "json_mode"] = "function_calling",
+        context: Mapping[str, Any] | None = None,
+    ) -> tuple[LLMResponse, S]:
+        cached = self.cache.get(cache_key)
+        if cached.hit and cached.value is not None:
+            try:
+                parsed = schema.model_validate_json(cached.value)
+                return LLMResponse(text=cached.value, cached=True), parsed
+            except Exception as exc:  # noqa: BLE001
+                self._log_json_parse_failure(
+                    source="cache_structured",
+                    raw_text=cached.value,
+                    exc=exc,
+                    cache_key=cache_key,
+                    context=context,
+                )
+                logger.bind(**self._build_log_context(cache_key=cache_key, context=context)).warning(
+                    "Deleting invalid cached structured response"
+                )
+                self.cache.delete(cache_key)
+
+        parsed = await self._ainvoke_structured_with_retry(
+            system_prompt,
+            user_prompt,
+            schema=schema,
+            method=method,
+            cache_key=cache_key,
+            context=context,
+        )
+        text = parsed.model_dump_json()
+        self.cache.set(cache_key, text)
+        return LLMResponse(text=text, cached=False), parsed
+
+    async def _invoke_on_worker(self, fn: Callable[..., Any], *args: Any) -> Any:
+        async with self._async_semaphore:
+            return await asyncio.to_thread(fn, *args)
 
     def _invoke_with_retry(
         self,
@@ -367,6 +465,69 @@ class OpenAIChatClient:
                     log.exception("LLM call failed on final attempt")
                 if attempt < attempts - 1:
                     time.sleep(min(0.5 * (2**attempt), 4.0))
+
+        raise RuntimeError("LLM call failed after retries") from last_exc
+
+    async def _ainvoke_with_retry(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        parser: Callable[[str], T] | None = None,
+        *,
+        cache_key: str | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> tuple[str, T] | str:
+        attempts = max(1, self.runtime.retries + 1)
+        last_exc: Exception | None = None
+        messages = [SystemMessage(system_prompt), HumanMessage(user_prompt)]
+
+        for attempt in range(attempts):
+            attempt_started = time.perf_counter()
+            try:
+                response = await self._invoke_on_worker(self.model.invoke, messages)
+                text = str(response.content).strip()
+                if not text:
+                    raise ValueError("Empty LLM response")
+                if parser is None:
+                    return text
+                try:
+                    parsed = parser(text)
+                except Exception as parse_exc:  # noqa: BLE001
+                    self._log_json_parse_failure(
+                        source="llm_response",
+                        raw_text=text,
+                        exc=parse_exc,
+                        cache_key=cache_key or "-",
+                        context=self._build_log_context(
+                            attempt=attempt + 1,
+                            attempts_total=attempts,
+                            context=context,
+                        ),
+                    )
+                    raise
+                return text, parsed
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
+                log = logger.bind(
+                    **self._build_log_context(
+                        cache_key=cache_key,
+                        attempt=attempt + 1,
+                        attempts_total=attempts,
+                        context=context,
+                    )
+                )
+                if self.config.observability.log_retry_attempts:
+                    log.warning(
+                        "LLM call failed elapsed_ms={} error_type={} error= {}",
+                        elapsed_ms,
+                        type(exc).__name__,
+                        exc,
+                    )
+                if attempt == attempts - 1:
+                    log.exception("LLM call failed on final attempt")
+                if attempt < attempts - 1:
+                    await asyncio.sleep(min(0.5 * (2**attempt), 4.0))
 
         raise RuntimeError("LLM call failed after retries") from last_exc
 
@@ -466,5 +627,106 @@ class OpenAIChatClient:
                     log.exception("LLM structured call failed on final attempt")
                 if attempt < attempts - 1:
                     time.sleep(min(0.5 * (2**attempt), 4.0))
+
+        raise RuntimeError("LLM structured call failed after retries") from last_exc
+
+    async def _ainvoke_structured_with_retry(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        schema: type[S],
+        method: Literal["function_calling", "json_schema", "json_mode"],
+        cache_key: str,
+        context: Mapping[str, Any] | None = None,
+    ) -> S:
+        attempts = max(1, self.runtime.retries + 1)
+        last_exc: Exception | None = None
+
+        structured_model = None
+        for builder in (
+            lambda: self.model.with_structured_output(schema, method=method, include_raw=True),
+            lambda: self.model.with_structured_output(schema, method=method),
+            lambda: self.model.with_structured_output(schema, include_raw=True),
+            lambda: self.model.with_structured_output(schema),
+        ):
+            try:
+                structured_model = builder()
+                break
+            except TypeError:
+                continue
+
+        if structured_model is None:
+            raise RuntimeError("Structured output is not supported by current model client")
+
+        messages = [SystemMessage(system_prompt), HumanMessage(user_prompt)]
+
+        for attempt in range(attempts):
+            attempt_started = time.perf_counter()
+            try:
+                response = await self._invoke_on_worker(structured_model.invoke, messages)
+
+                parsed_payload: Any = response
+                if isinstance(response, dict) and "parsed" in response:
+                    parsing_error = response.get("parsing_error")
+                    if parsing_error:
+                        raw_payload = _coerce_payload_text(response.get("raw"))
+                        if raw_payload:
+                            self._log_json_parse_failure(
+                                source="structured_response",
+                                raw_text=raw_payload,
+                                exc=ValueError(str(parsing_error)),
+                                cache_key=cache_key,
+                                context=self._build_log_context(
+                                    attempt=attempt + 1,
+                                    attempts_total=attempts,
+                                    context=context,
+                                ),
+                            )
+                        raise ValueError(f"Structured output parsing failed: {parsing_error}")
+                    parsed_payload = response.get("parsed")
+
+                if parsed_payload is None:
+                    if isinstance(response, dict):
+                        raw_payload = _coerce_payload_text(response.get("raw"))
+                        if raw_payload:
+                            self._log_json_parse_failure(
+                                source="structured_response_empty_parsed",
+                                raw_text=raw_payload,
+                                exc=ValueError("Empty structured output response"),
+                                cache_key=cache_key,
+                                context=self._build_log_context(
+                                    attempt=attempt + 1,
+                                    attempts_total=attempts,
+                                    context=context,
+                                ),
+                            )
+                    raise ValueError("Empty structured output response")
+
+                if isinstance(parsed_payload, schema):
+                    return parsed_payload
+                return schema.model_validate(parsed_payload)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                elapsed_ms = int((time.perf_counter() - attempt_started) * 1000)
+                log = logger.bind(
+                    **self._build_log_context(
+                        cache_key=cache_key,
+                        attempt=attempt + 1,
+                        attempts_total=attempts,
+                        context=context,
+                    )
+                )
+                if self.config.observability.log_retry_attempts:
+                    log.warning(
+                        "LLM structured call failed elapsed_ms={} error_type={} error={} ",
+                        elapsed_ms,
+                        type(exc).__name__,
+                        exc,
+                    )
+                if attempt == attempts - 1:
+                    log.exception("LLM structured call failed on final attempt")
+                if attempt < attempts - 1:
+                    await asyncio.sleep(min(0.5 * (2**attempt), 4.0))
 
         raise RuntimeError("LLM structured call failed after retries") from last_exc

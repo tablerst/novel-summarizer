@@ -1,0 +1,13 @@
+llm:
+  chat_endpoints:
+    storyteller_default:
+      timeout_s: 45
+      retries: 1
+
+storyteller:
+  narration_preset: "short"
+  narration_temperature: 0.35
+  memory_top_k: 4
+  include_inner_thoughts: false
+  refine_enabled: false
+  evidence_max_snippets: 2

@@ -5,11 +5,15 @@ from loguru import logger
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.embeddings.service import retrieve_hybrid_memories
 from novel_summarizer.storyteller.state import StorytellerState
+from novel_summarizer.storyteller.tiering import effective_storyteller_value
 
 
 async def run(state: StorytellerState, *, config: AppConfigRoot, book_id: int) -> dict:
+    if state.get("awakened_memories") is not None:
+        return {}
+
     chapter_idx = int(state.get("chapter_idx") or 0)
-    top_k = int(config.storyteller.memory_top_k)
+    top_k = int(effective_storyteller_value(state, config, "memory_top_k", config.storyteller.memory_top_k))
     if top_k <= 0:
         return {"awakened_memories": []}
 

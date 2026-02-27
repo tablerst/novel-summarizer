@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +66,7 @@ async def get_latest_narration(session: AsyncSession, chapter_id: int) -> Narrat
             Narration.input_hash,
         )
         .where(Narration.chapter_id == chapter_id)
-        .order_by(desc(Narration.created_at))
+        .order_by(desc(Narration.created_at), desc(Narration.id))
         .limit(1)
     )
     row = result.first()
@@ -88,6 +88,48 @@ async def list_narrations_by_book(session: AsyncSession, book_id: int) -> list[N
         )
         .where(Narration.book_id == book_id)
         .order_by(Narration.chapter_idx)
+    )
+    rows = result.all()
+    return [_to_row(row) for row in rows]
+
+
+async def list_latest_narrations_by_book(session: AsyncSession, book_id: int) -> list[NarrationRow]:
+    ranked = (
+        select(
+            Narration.id.label("id"),
+            Narration.book_id.label("book_id"),
+            Narration.chapter_id.label("chapter_id"),
+            Narration.chapter_idx.label("chapter_idx"),
+            Narration.narration_text.label("narration_text"),
+            Narration.key_events_json.label("key_events_json"),
+            Narration.prompt_version.label("prompt_version"),
+            Narration.model.label("model"),
+            Narration.input_hash.label("input_hash"),
+            func.row_number()
+            .over(
+                partition_by=Narration.chapter_id,
+                order_by=(Narration.created_at.desc(), Narration.id.desc()),
+            )
+            .label("row_num"),
+        )
+        .where(Narration.book_id == book_id)
+        .subquery()
+    )
+
+    result = await session.execute(
+        select(
+            ranked.c.id,
+            ranked.c.book_id,
+            ranked.c.chapter_id,
+            ranked.c.chapter_idx,
+            ranked.c.narration_text,
+            ranked.c.key_events_json,
+            ranked.c.prompt_version,
+            ranked.c.model,
+            ranked.c.input_hash,
+        )
+        .where(ranked.c.row_num == 1)
+        .order_by(ranked.c.chapter_idx)
     )
     rows = result.all()
     return [_to_row(row) for row in rows]
@@ -143,21 +185,35 @@ async def upsert_narration(
 
 
 async def rebuild_narrations_fts_for_book(session: AsyncSession, book_id: int) -> int:
-    await session.execute(sa_text("DELETE FROM narrations_fts WHERE book_id = :book_id"), {"book_id": str(book_id)})
+    await session.execute(sa_text("DELETE FROM narrations_fts WHERE book_id = :book_id"), {"book_id": book_id})
     await session.execute(
         sa_text(
             """
+            WITH latest_narrations AS (
+                SELECT
+                    n.id,
+                    n.book_id,
+                    n.chapter_id,
+                    n.chapter_idx,
+                    n.narration_text,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY n.chapter_id
+                        ORDER BY n.created_at DESC, n.id DESC
+                    ) AS row_num
+                FROM narrations n
+                WHERE n.book_id = :book_id
+            )
             INSERT INTO narrations_fts (narration_id, book_id, chapter_idx, chapter_title, text)
-            SELECT n.id, n.book_id, n.chapter_idx, ch.title, n.narration_text
-            FROM narrations n
-            JOIN chapters ch ON ch.id = n.chapter_id
-            WHERE n.book_id = :book_id
+            SELECT ln.id, ln.book_id, ln.chapter_idx, ch.title, ln.narration_text
+            FROM latest_narrations ln
+            JOIN chapters ch ON ch.id = ln.chapter_id
+            WHERE ln.row_num = 1
             """
         ),
         {"book_id": book_id},
     )
     count_result = await session.execute(
-        sa_text("SELECT COUNT(*) FROM narrations_fts WHERE book_id = :book_id"), {"book_id": str(book_id)}
+        sa_text("SELECT COUNT(*) FROM narrations_fts WHERE book_id = :book_id"), {"book_id": book_id}
     )
     return int(count_result.scalar_one())
 
@@ -192,7 +248,7 @@ async def search_narrations_fts(
         ),
         {
             "query": query,
-            "book_id": str(book_id),
+            "book_id": book_id,
             "before_chapter_idx": before_chapter_idx,
             "limit": limit,
         },

@@ -130,6 +130,9 @@ class SQLAlchemyRepo:
     async def list_narrations_by_book(self, book_id: int) -> list[NarrationRow]:
         return await narrations_crud.list_narrations_by_book(self.session, book_id)
 
+    async def list_latest_narrations_by_book(self, book_id: int) -> list[NarrationRow]:
+        return await narrations_crud.list_latest_narrations_by_book(self.session, book_id)
+
     async def rebuild_narrations_fts_for_book(self, book_id: int) -> int:
         return await narrations_crud.rebuild_narrations_fts_for_book(self.session, book_id)
 

@@ -167,7 +167,7 @@ async def _export_storyteller_outputs(
     output_dir: Path,
     book_title: str | None,
 ) -> ExportResult:
-    narrations = await repo.list_narrations_by_book(book_id)
+    narrations = await repo.list_latest_narrations_by_book(book_id)
     chapters = await repo.list_chapters(book_id)
     chapter_title_map = {chapter.id: chapter.title for chapter in chapters}
 
@@ -304,7 +304,7 @@ async def export_book_markdown(
         output_dir = (output_root / book.book_hash).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        narrations = await repo.list_narrations_by_book(book_id)
+        narrations = await repo.list_latest_narrations_by_book(book_id)
         if mode == "storyteller":
             if not narrations:
                 raise ValueError(

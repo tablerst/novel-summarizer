@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import time
 
@@ -14,8 +15,10 @@ from novel_summarizer.llm.factory import OpenAIChatClient
 from novel_summarizer.storage.db import session_scope
 from novel_summarizer.storage.repo import SQLAlchemyRepo
 from novel_summarizer.storyteller.graph import build_storyteller_graph
+from novel_summarizer.storyteller.nodes import entity_extract, memory_retrieve
 from novel_summarizer.storyteller.prompts.narration import NARRATION_PROMPT_VERSION
 from novel_summarizer.storyteller.state import StorytellerState
+from novel_summarizer.storyteller.tiering import build_tier_overrides, decide_tier, has_storyteller_memory_retrieval
 
 STORYTELLER_MVP_MODEL = "storyteller-mvp"
 
@@ -109,7 +112,7 @@ async def storytell_book(
         async with session_scope() as session:
             repo = SQLAlchemyRepo(session)
 
-            if config.storyteller.memory_top_k > 0:
+            if has_storyteller_memory_retrieval(config):
                 try:
                     await prepare_retrieval_assets(book_id=book_id, config=config)
                 except Exception as exc:  # noqa: BLE001
@@ -125,20 +128,99 @@ async def storytell_book(
                 narration_llm_client=narration_llm_client,
                 refine_llm_client=refine_llm_client,
             )
+            prefetch_window = max(0, int(config.storyteller.prefetch_window))
+            prefetch_tasks: dict[int, asyncio.Task[dict]] = {}
+
+            async def _prefetch_state(chapter_row) -> dict:
+                pre_text = await _chapter_text(repo, chapter_row.id)
+                if not pre_text:
+                    return {}
+
+                pre_tier = decide_tier(
+                    chapter_idx=chapter_row.idx,
+                    chapter_title=chapter_row.title,
+                    chapter_text=pre_text,
+                    config=config,
+                )
+                pre_overrides = build_tier_overrides(tier=pre_tier, config=config)
+                pre_state: StorytellerState = {
+                    "book_id": book_id,
+                    "chapter_id": chapter_row.id,
+                    "chapter_idx": chapter_row.idx,
+                    "chapter_title": chapter_row.title,
+                    "chapter_text": pre_text,
+                    "tier": pre_tier,
+                    "storyteller_overrides": pre_overrides,
+                }
+
+                pre_state.update(
+                    await entity_extract.run(
+                        pre_state,
+                        config=config,
+                        llm_client=entity_llm_client,
+                    )
+                )
+                pre_state.update(
+                    await memory_retrieve.run(
+                        pre_state,
+                        config=config,
+                        book_id=book_id,
+                    )
+                )
+                return dict(pre_state)
+
+            def _schedule_prefetch(current_idx: int) -> None:
+                if prefetch_window <= 0:
+                    return
+                for offset in range(1, prefetch_window + 1):
+                    target_idx = current_idx + offset
+                    if target_idx >= len(selected_chapters):
+                        break
+                    target = selected_chapters[target_idx]
+                    if target.id in prefetch_tasks:
+                        continue
+                    prefetch_tasks[target.id] = asyncio.create_task(_prefetch_state(target))
+
             run_log.info("Storyteller chapter loop started book_id={} chapters_selected={}", book_id, len(selected_chapters))
 
-            for chapter in selected_chapters:
+            for chapter_position, chapter in enumerate(selected_chapters):
                 chapter_log = run_log.bind(chapter_id=chapter.id, chapter_idx=chapter.idx)
-                chapter_text = await _chapter_text(repo, chapter.id)
+
+                _schedule_prefetch(chapter_position)
+
+                prefetched_state: dict | None = None
+                prefetch_task = prefetch_tasks.pop(chapter.id, None)
+                if prefetch_task is not None:
+                    try:
+                        prefetched_state = await prefetch_task
+                    except Exception as exc:  # noqa: BLE001
+                        chapter_log.warning("Prefetch task failed, fallback to synchronous path: {}", exc)
+
+                chapter_text = str((prefetched_state or {}).get("chapter_text") or "")
+                if not chapter_text:
+                    chapter_text = await _chapter_text(repo, chapter.id)
                 if not chapter_text:
                     chapter_log.warning("Chapter text empty; skipped")
                     chapters_skipped += 1
                     continue
 
+                tier = str((prefetched_state or {}).get("tier") or "")
+                if not tier:
+                    tier = decide_tier(
+                        chapter_idx=chapter.idx,
+                        chapter_title=chapter.title,
+                        chapter_text=chapter_text,
+                        config=config,
+                    )
+                tier_overrides = (prefetched_state or {}).get("storyteller_overrides")
+                if not isinstance(tier_overrides, dict):
+                    tier_overrides = build_tier_overrides(tier=tier, config=config)
+                tier_overrides_json = orjson.dumps(tier_overrides, option=orjson.OPT_SORT_KEYS).decode("utf-8")
+
                 input_hash = sha256_text(
                     (
                         f"{chapter.id}:{chapter.idx}:{chapter_text}:{config.storyteller.style}:"
-                        f"{config.storyteller.narration_ratio}:{config.storyteller.refine_enabled}:"
+                        f"{tier}:{tier_overrides_json}:"
                         f"{config.llm.routes.storyteller_narration_chat}:{config.llm.routes.storyteller_refine_chat}"
                     )
                 )
@@ -159,8 +241,21 @@ async def storytell_book(
                     "chapter_idx": chapter.idx,
                     "chapter_title": chapter.title,
                     "chapter_text": chapter_text,
+                    "tier": tier,
+                    "storyteller_overrides": tier_overrides,
                 }
-                chapter_log.debug("Invoking storyteller graph")
+                if prefetched_state:
+                    for key in (
+                        "entities_mentioned",
+                        "locations_mentioned",
+                        "items_mentioned",
+                        "entity_llm_calls",
+                        "entity_llm_cache_hit",
+                        "awakened_memories",
+                    ):
+                        if key in prefetched_state:
+                            state[key] = prefetched_state[key]
+                chapter_log.debug("Invoking storyteller graph tier={}", tier)
                 try:
                     final_state = await graph.ainvoke(state)
                 except Exception:
@@ -216,6 +311,12 @@ async def storytell_book(
                     len(final_state.get("consistency_warnings") or []),
                     len(final_state.get("consistency_actions") or []),
                 )
+
+            if prefetch_tasks:
+                for task in prefetch_tasks.values():
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*prefetch_tasks.values(), return_exceptions=True)
     finally:
         cache.close()
 

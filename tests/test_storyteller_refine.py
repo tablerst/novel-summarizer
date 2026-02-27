@@ -80,3 +80,19 @@ def test_refine_narration_prefers_structured_output() -> None:
 
     assert client.structured_calls == 1
     assert result["narration"] == "结构化润色后的说书稿。"
+
+
+def test_refine_narration_override_disables_refine() -> None:
+    config = AppConfigRoot.model_validate({"storyteller": {"refine_enabled": True}})
+    state = cast(
+        StorytellerState,
+        {
+            "narration": "初稿说书稿。",
+            "storyteller_overrides": {"refine_enabled": False},
+        },
+    )
+
+    result = asyncio.run(refine_narration.run(state, config=config, llm_client=_FakeLLMClient()))
+
+    assert result["refine_llm_calls"] == 0
+    assert "narration" not in result

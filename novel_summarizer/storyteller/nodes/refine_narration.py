@@ -12,6 +12,7 @@ from novel_summarizer.llm.factory import make_cache_key
 from novel_summarizer.storyteller.json_utils import safe_load_json_dict
 from novel_summarizer.storyteller.prompts.refine import REFINE_PROMPT_VERSION, refine_prompt
 from novel_summarizer.storyteller.state import StorytellerState
+from novel_summarizer.storyteller.tiering import effective_storyteller_value
 
 
 class RefineOutput(BaseModel):
@@ -32,6 +33,12 @@ def _normalize_text(text: Any) -> str:
 
 async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any | None = None) -> dict:
     narration = _normalize_text(state.get("narration"))
+    refine_enabled = bool(effective_storyteller_value(state, config, "refine_enabled", config.storyteller.refine_enabled))
+    refine_temperature = float(
+        effective_storyteller_value(state, config, "refine_temperature", config.storyteller.refine_temperature)
+    )
+    language = str(effective_storyteller_value(state, config, "language", config.storyteller.language))
+    style = str(effective_storyteller_value(state, config, "style", config.storyteller.style))
     if not narration:
         return {
             "refine_llm_calls": 0,
@@ -42,7 +49,7 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
 
     input_tokens = _estimate_tokens(narration)
 
-    if not config.storyteller.refine_enabled:
+    if not refine_enabled:
         return {
             "refine_llm_calls": 0,
             "refine_llm_cache_hit": False,
@@ -59,7 +66,7 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
         }
 
     try:
-        system, user_template = refine_prompt(language=config.storyteller.language, style=config.storyteller.style)
+        system, user_template = refine_prompt(language=language, style=style)
         user = user_template.format(
             key_events=orjson.dumps(state.get("key_events", [])).decode("utf-8"),
             character_updates=orjson.dumps(state.get("character_updates", [])).decode("utf-8"),
@@ -74,7 +81,7 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
                     "narration": narration,
                     "key_events": state.get("key_events", []),
                     "character_updates": state.get("character_updates", []),
-                    "style": config.storyteller.style,
+                    "style": style,
                 }
             ).decode("utf-8")
         )
@@ -83,9 +90,18 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             llm_client.model_identifier,
             REFINE_PROMPT_VERSION,
             input_hash,
-            str(config.storyteller.refine_temperature),
+            str(refine_temperature),
         )
-        if hasattr(llm_client, "complete_structured"):
+        if hasattr(llm_client, "complete_structured_async"):
+            llm_response, payload_obj = await llm_client.complete_structured_async(
+                system,
+                user,
+                cache_key,
+                RefineOutput,
+                method="function_calling",
+            )
+            payload = payload_obj.model_dump(mode="python")
+        elif hasattr(llm_client, "complete_structured"):
             llm_response, payload_obj = llm_client.complete_structured(
                 system,
                 user,
@@ -95,7 +111,15 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             )
             payload = payload_obj.model_dump(mode="python")
         else:
-            llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+            if hasattr(llm_client, "complete_json_async"):
+                llm_response, payload = await llm_client.complete_json_async(
+                    system,
+                    user,
+                    cache_key,
+                    safe_load_json_dict,
+                )
+            else:
+                llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
         cache_hit = bool(getattr(llm_response, "cached", False))
         refined = _normalize_text(payload.get("narration")) or narration
 

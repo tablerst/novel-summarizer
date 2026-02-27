@@ -217,6 +217,75 @@ class SummarizeConfig(BaseModel):
     with_citations: WithCitationsConfig = WithCitationsConfig()
 
 
+class StorytellerTierProfileConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    narration_ratio: tuple[float, float]
+    memory_top_k: int
+    include_key_dialogue: bool
+    include_inner_thoughts: bool
+    refine_enabled: bool
+    entity_extract_mode: Literal["llm", "fallback"] = "llm"
+
+    @field_validator("narration_ratio")
+    @classmethod
+    def _validate_ratio(cls, value: tuple[float, float]) -> tuple[float, float]:
+        low, high = value
+        if not (0 < low < 1 and 0 < high < 1):
+            raise ValueError("narration_ratio values must be in range (0, 1)")
+        if low >= high:
+            raise ValueError("narration_ratio[0] must be less than narration_ratio[1]")
+        return value
+
+    @field_validator("memory_top_k")
+    @classmethod
+    def _non_negative_memory_top_k(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("memory_top_k must be non-negative")
+        return value
+
+
+class StorytellerTieringConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    default_tier: Literal["short", "medium", "long"] = "medium"
+    long_every_n: int = 0
+    long_min_chars: int = 0
+    long_keyword_triggers: list[str] = Field(default_factory=list)
+    short: StorytellerTierProfileConfig = StorytellerTierProfileConfig(
+        narration_ratio=(0.12, 0.2),
+        memory_top_k=0,
+        include_key_dialogue=False,
+        include_inner_thoughts=False,
+        refine_enabled=False,
+        entity_extract_mode="fallback",
+    )
+    medium: StorytellerTierProfileConfig = StorytellerTierProfileConfig(
+        narration_ratio=(0.2, 0.3),
+        memory_top_k=4,
+        include_key_dialogue=True,
+        include_inner_thoughts=False,
+        refine_enabled=False,
+        entity_extract_mode="llm",
+    )
+    long: StorytellerTierProfileConfig = StorytellerTierProfileConfig(
+        narration_ratio=(0.4, 0.5),
+        memory_top_k=8,
+        include_key_dialogue=True,
+        include_inner_thoughts=True,
+        refine_enabled=True,
+        entity_extract_mode="llm",
+    )
+
+    @field_validator("long_every_n", "long_min_chars")
+    @classmethod
+    def _non_negative_int(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("tiering integer settings must be non-negative")
+        return value
+
+
 class StorytellerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -226,6 +295,7 @@ class StorytellerConfig(BaseModel):
     narration_ratio: tuple[float, float] = (0.4, 0.5)
     narration_temperature: float = 0.45
     entity_temperature: float = 0.1
+    entity_extract_mode: Literal["llm", "fallback"] = "llm"
     state_temperature: float = 0.1
     memory_top_k: int = 8
     recent_events_window: int = 5
@@ -235,6 +305,8 @@ class StorytellerConfig(BaseModel):
     refine_temperature: float = 0.35
     evidence_min_support_score: float = 0.18
     evidence_max_snippets: int = 3
+    prefetch_window: int = 0
+    tiering: StorytellerTieringConfig = StorytellerTieringConfig()
 
     @field_validator("narration_temperature", "entity_temperature", "state_temperature", "refine_temperature")
     @classmethod
@@ -248,6 +320,13 @@ class StorytellerConfig(BaseModel):
     def _positive_int(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("storyteller integer config values must be positive")
+        return value
+
+    @field_validator("prefetch_window")
+    @classmethod
+    def _non_negative_prefetch_window(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("prefetch_window must be non-negative")
         return value
 
     @field_validator("evidence_max_snippets")

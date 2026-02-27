@@ -81,6 +81,49 @@ def test_entity_extract_prefers_structured_output_when_available() -> None:
     assert result["entities_mentioned"] == ["韩立"]
 
 
+def test_entity_extract_override_fallback_mode_skips_llm() -> None:
+    config = AppConfigRoot()
+    state = cast(
+        StorytellerState,
+        {
+            "chapter_id": 1,
+            "chapter_idx": 1,
+            "chapter_title": "第1章",
+            "chapter_text": "韩立在天南得到掌天瓶。",
+            "storyteller_overrides": {"entity_extract_mode": "fallback"},
+        },
+    )
+
+    client = _FakeStructuredLLMClient()
+    result = asyncio.run(entity_extract.run(state, config=config, llm_client=client))
+
+    assert client.structured_calls == 0
+    assert result["entity_llm_calls"] == 0
+    assert result["entities_mentioned"]
+
+
+def test_entity_extract_prefilled_entities_short_circuits() -> None:
+    config = AppConfigRoot()
+    state = cast(
+        StorytellerState,
+        {
+            "chapter_id": 1,
+            "chapter_idx": 1,
+            "chapter_title": "第1章",
+            "chapter_text": "韩立在天南得到掌天瓶。",
+            "entities_mentioned": ["韩立"],
+            "locations_mentioned": ["天南"],
+            "items_mentioned": ["掌天瓶"],
+        },
+    )
+
+    client = _FakeStructuredLLMClient()
+    result = asyncio.run(entity_extract.run(state, config=config, llm_client=client))
+
+    assert result == {}
+    assert client.structured_calls == 0
+
+
 def test_memory_retrieve_filters_future_and_current(monkeypatch) -> None:
     config = AppConfigRoot()
 
@@ -130,6 +173,50 @@ def test_memory_retrieve_filters_future_and_current(monkeypatch) -> None:
     assert all(int(item["chapter_idx"]) < 3 for item in memories)
     assert [item["source_id"] for item in memories] == [101, 202]
     assert [item["source_type"] for item in memories] == ["chunk", "narration"]
+
+
+def test_memory_retrieve_override_top_k_zero_returns_empty(monkeypatch) -> None:
+    config = AppConfigRoot()
+
+    async def _fake_retrieve_hybrid_memories(**kwargs):  # pragma: no cover
+        _ = kwargs
+        raise AssertionError("retrieve_hybrid_memories should not be called when top_k is 0")
+
+    monkeypatch.setattr(memory_retrieve, "retrieve_hybrid_memories", _fake_retrieve_hybrid_memories)
+
+    state = cast(
+        StorytellerState,
+        {
+            "chapter_idx": 3,
+            "chapter_text": "本章文本",
+            "storyteller_overrides": {"memory_top_k": 0},
+        },
+    )
+    result = asyncio.run(memory_retrieve.run(state, config=config, book_id=1))
+
+    assert result["awakened_memories"] == []
+
+
+def test_memory_retrieve_prefilled_short_circuits(monkeypatch) -> None:
+    config = AppConfigRoot()
+
+    async def _fake_retrieve_hybrid_memories(**kwargs):  # pragma: no cover
+        _ = kwargs
+        raise AssertionError("retrieve_hybrid_memories should not be called when state is prefilled")
+
+    monkeypatch.setattr(memory_retrieve, "retrieve_hybrid_memories", _fake_retrieve_hybrid_memories)
+
+    state = cast(
+        StorytellerState,
+        {
+            "chapter_idx": 3,
+            "chapter_text": "本章文本",
+            "awakened_memories": [{"source_id": 1, "chapter_idx": 1, "text": "前情"}],
+        },
+    )
+    result = asyncio.run(memory_retrieve.run(state, config=config, book_id=1))
+
+    assert result == {}
 
 
 def test_storyteller_generate_fallback_produces_narration() -> None:

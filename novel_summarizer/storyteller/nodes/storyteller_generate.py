@@ -12,6 +12,7 @@ from novel_summarizer.llm.factory import make_cache_key
 from novel_summarizer.storyteller.json_utils import safe_load_json_dict
 from novel_summarizer.storyteller.prompts.narration import NARRATION_PROMPT_VERSION, narration_prompt
 from novel_summarizer.storyteller.state import StorytellerState
+from novel_summarizer.storyteller.tiering import effective_storyteller_value
 
 
 class KeyEventOutput(BaseModel):
@@ -77,7 +78,30 @@ def _normalize_dict_list(raw: Any) -> list[dict[str, Any]]:
 
 async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any | None = None) -> dict:
     chapter_text = state.get("chapter_text", "")
-    fallback_narration = _draft_narration(chapter_text, config.storyteller.narration_ratio)
+    narration_ratio = tuple(effective_storyteller_value(state, config, "narration_ratio", config.storyteller.narration_ratio))
+    include_key_dialogue = bool(
+        effective_storyteller_value(state, config, "include_key_dialogue", config.storyteller.include_key_dialogue)
+    )
+    include_inner_thoughts = bool(
+        effective_storyteller_value(
+            state,
+            config,
+            "include_inner_thoughts",
+            config.storyteller.include_inner_thoughts,
+        )
+    )
+    narration_temperature = float(
+        effective_storyteller_value(
+            state,
+            config,
+            "narration_temperature",
+            config.storyteller.narration_temperature,
+        )
+    )
+    language = str(effective_storyteller_value(state, config, "language", config.storyteller.language))
+    style = str(effective_storyteller_value(state, config, "style", config.storyteller.style))
+
+    fallback_narration = _draft_narration(chapter_text, narration_ratio)
     chapter_id = state.get("chapter_id")
     chapter_idx = state.get("chapter_idx")
     node_log = logger.bind(node="storyteller_generate", chapter_id=chapter_id, chapter_idx=chapter_idx)
@@ -109,11 +133,11 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
 
     try:
         system, user_template = narration_prompt(
-            language=config.storyteller.language,
-            style=config.storyteller.style,
-            narration_ratio=config.storyteller.narration_ratio,
-            include_key_dialogue=config.storyteller.include_key_dialogue,
-            include_inner_thoughts=config.storyteller.include_inner_thoughts,
+            language=language,
+            style=style,
+            narration_ratio=narration_ratio,
+            include_key_dialogue=include_key_dialogue,
+            include_inner_thoughts=include_inner_thoughts,
         )
         user = user_template.format(
             chapter_title=state.get("chapter_title", ""),
@@ -135,8 +159,8 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
                     "item_states": state.get("item_states", []),
                     "recent_events": state.get("recent_events", []),
                     "awakened_memories": state.get("awakened_memories", []),
-                    "style": config.storyteller.style,
-                    "ratio": config.storyteller.narration_ratio,
+                    "style": style,
+                    "ratio": narration_ratio,
                 }
             ).decode("utf-8")
         )
@@ -145,7 +169,7 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             llm_client.model_identifier,
             NARRATION_PROMPT_VERSION,
             input_hash,
-            str(config.storyteller.narration_temperature),
+            str(narration_temperature),
         )
         llm_context = {
             "node": "storyteller_generate",
@@ -155,7 +179,17 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
         }
         run_log = node_log.bind(cache_key=cache_key[:12], input_hash=input_hash[:12])
         run_log.debug("Invoking storyteller narration generation")
-        if hasattr(llm_client, "complete_structured"):
+        if hasattr(llm_client, "complete_structured_async"):
+            llm_response, payload_obj = await llm_client.complete_structured_async(
+                system,
+                user,
+                cache_key,
+                NarrationOutput,
+                method="function_calling",
+                context=llm_context,
+            )
+            payload = payload_obj.model_dump(mode="python")
+        elif hasattr(llm_client, "complete_structured"):
             llm_response, payload_obj = llm_client.complete_structured(
                 system,
                 user,
@@ -166,13 +200,22 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             )
             payload = payload_obj.model_dump(mode="python")
         else:
-            llm_response, payload = llm_client.complete_json(
-                system,
-                user,
-                cache_key,
-                safe_load_json_dict,
-                context=llm_context,
-            )
+            if hasattr(llm_client, "complete_json_async"):
+                llm_response, payload = await llm_client.complete_json_async(
+                    system,
+                    user,
+                    cache_key,
+                    safe_load_json_dict,
+                    context=llm_context,
+                )
+            else:
+                llm_response, payload = llm_client.complete_json(
+                    system,
+                    user,
+                    cache_key,
+                    safe_load_json_dict,
+                    context=llm_context,
+                )
         cache_hit = bool(getattr(llm_response, "cached", False))
 
         narration = str(payload.get("narration", "")).strip() or fallback_narration

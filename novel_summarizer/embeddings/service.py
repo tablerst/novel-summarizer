@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import re
-from typing import Any
-
-from loguru import logger
+from typing import Any, cast
 
 from langchain_community.vectorstores import LanceDB
 from langchain_core.documents import Document
+from loguru import logger
 
 from novel_summarizer.config.schema import AppConfigRoot
 from novel_summarizer.llm.embeddings import OpenAIEmbeddingClient
@@ -53,7 +53,7 @@ def _build_vector_store(config: AppConfigRoot, table_name: str) -> LanceDB:
     return LanceDB(
         uri=str(config.storage.lancedb_dir),
         table_name=table_name,
-        embedding=client.model,
+        embedding=cast(Any, client.model),
         mode="append",
     )
 
@@ -84,6 +84,7 @@ def _list_existing_ids(store: LanceDB, id_keys: tuple[str, ...]) -> set[int]:
                     break
     else:
         return set()
+
     ids: set[int] = set()
     for value in values:
         try:
@@ -177,7 +178,7 @@ async def embed_book_narrations(book_id: int, config: AppConfigRoot, batch_size:
 
     async with session_scope() as session:
         repo = SQLAlchemyRepo(session)
-        narrations = await repo.list_narrations_by_book(book_id)
+        narrations = await repo.list_latest_narrations_by_book(book_id)
         chapters = await repo.list_chapters(book_id)
         chapter_title_map = {chapter.id: chapter.title for chapter in chapters}
 
@@ -329,11 +330,12 @@ def _retrieve_vector_records(
     records: list[dict[str, Any]] = []
     for rank, item in enumerate(raw_results, start=1):
         source_id = item.get(source_id_key)
+        chapter_idx_raw = item.get("chapter_idx", -1)
         if source_id is None:
             continue
         try:
             source_id = int(source_id)
-            chapter_idx = int(item.get("chapter_idx"))
+            chapter_idx = int(chapter_idx_raw)
         except (TypeError, ValueError):
             continue
         records.append(
@@ -390,30 +392,30 @@ async def retrieve_hybrid_memories(
     candidates: list[dict[str, Any]] = []
 
     try:
-        candidates.extend(
-            _retrieve_vector_records(
-                config=config,
-                table_name=_chunks_table_name(book_id),
-                query_text=query_text,
-                top_k=max(top_k * 3, top_k),
-                source_type="chunk",
-                source_id_key="chunk_id",
-            )
+        chunk_candidates = await asyncio.to_thread(
+            _retrieve_vector_records,
+            config=config,
+            table_name=_chunks_table_name(book_id),
+            query_text=query_text,
+            top_k=max(top_k * 3, top_k),
+            source_type="chunk",
+            source_id_key="chunk_id",
         )
+        candidates.extend(chunk_candidates)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Chunk vector retrieval failed: {}", exc)
 
     try:
-        candidates.extend(
-            _retrieve_vector_records(
-                config=config,
-                table_name=_narrations_table_name(book_id),
-                query_text=query_text,
-                top_k=max(top_k * 2, top_k),
-                source_type="narration",
-                source_id_key="narration_id",
-            )
+        narration_candidates = await asyncio.to_thread(
+            _retrieve_vector_records,
+            config=config,
+            table_name=_narrations_table_name(book_id),
+            query_text=query_text,
+            top_k=max(top_k * 2, top_k),
+            source_type="narration",
+            source_id_key="narration_id",
         )
+        candidates.extend(narration_candidates)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Narration vector retrieval failed: {}", exc)
 

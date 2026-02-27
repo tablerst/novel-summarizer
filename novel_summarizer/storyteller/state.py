@@ -10,6 +10,8 @@ class StorytellerState(TypedDict):
     chapter_idx: int
     chapter_title: str
     chapter_text: str
+    tier: NotRequired[str]
+    storyteller_overrides: NotRequired[dict]
 
     # Node outputs
     entities_mentioned: NotRequired[list[str]]

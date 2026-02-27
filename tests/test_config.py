@@ -216,6 +216,7 @@ def test_storyteller_narration_preset_defaults_to_medium_ratio() -> None:
 
     assert config.storyteller.narration_preset == "medium"
     assert config.storyteller.narration_ratio == (0.4, 0.5)
+    assert config.storyteller.prefetch_window == 0
 
 
 @pytest.mark.parametrize(
@@ -256,6 +257,11 @@ def test_llm_route_summarize_falls_back_to_storyteller() -> None:
 
     assert endpoint_name == config.llm.routes.storyteller_chat
     assert endpoint.model == config.llm.chat_endpoints[config.llm.routes.storyteller_chat].model
+
+
+def test_storyteller_prefetch_window_validation() -> None:
+    with pytest.raises(ValidationError):
+        AppConfigRoot.model_validate({"storyteller": {"prefetch_window": -1}})
 
 
 def test_llm_route_storyteller_node_specific_override() -> None:

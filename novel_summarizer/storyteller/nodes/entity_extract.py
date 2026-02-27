@@ -12,6 +12,7 @@ from novel_summarizer.llm.factory import make_cache_key
 from novel_summarizer.storyteller.json_utils import safe_load_json_dict
 from novel_summarizer.storyteller.prompts.entity import ENTITY_PROMPT_VERSION, entity_prompt
 from novel_summarizer.storyteller.state import StorytellerState
+from novel_summarizer.storyteller.tiering import effective_storyteller_value
 
 
 _CJK_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,8}")
@@ -58,10 +59,16 @@ def _normalize_list_field(payload: dict[str, Any], key: str, max_items: int = 32
 
 
 async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any | None = None) -> dict:
+    if state.get("entities_mentioned") is not None:
+        return {}
+
     text = state.get("chapter_text", "")
     fallback = _fallback_entities(text)
+    extract_mode = str(effective_storyteller_value(state, config, "entity_extract_mode", "llm"))
+    entity_temperature = float(effective_storyteller_value(state, config, "entity_temperature", 0.1))
+    language = str(effective_storyteller_value(state, config, "language", config.storyteller.language))
 
-    if llm_client is None:
+    if llm_client is None or extract_mode == "fallback":
         return {
             "entities_mentioned": fallback["characters"],
             "locations_mentioned": fallback["locations"],
@@ -71,7 +78,7 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
         }
 
     try:
-        system, user_template = entity_prompt(config.storyteller.language)
+        system, user_template = entity_prompt(language)
         user = user_template.format(chapter_text=text)
         input_hash = sha256_text(
             f"{state.get('chapter_id')}::{state.get('chapter_idx')}::{state.get('chapter_title')}::{text}"
@@ -81,9 +88,18 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             llm_client.model_identifier,
             ENTITY_PROMPT_VERSION,
             input_hash,
-            str(config.storyteller.entity_temperature),
+            str(entity_temperature),
         )
-        if hasattr(llm_client, "complete_structured"):
+        if hasattr(llm_client, "complete_structured_async"):
+            llm_response, payload_obj = await llm_client.complete_structured_async(
+                system,
+                user,
+                cache_key,
+                EntityExtractOutput,
+                method="function_calling",
+            )
+            payload = payload_obj.model_dump(mode="python")
+        elif hasattr(llm_client, "complete_structured"):
             llm_response, payload_obj = llm_client.complete_structured(
                 system,
                 user,
@@ -93,7 +109,15 @@ async def run(state: StorytellerState, *, config: AppConfigRoot, llm_client: Any
             )
             payload = payload_obj.model_dump(mode="python")
         else:
-            llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
+            if hasattr(llm_client, "complete_json_async"):
+                llm_response, payload = await llm_client.complete_json_async(
+                    system,
+                    user,
+                    cache_key,
+                    safe_load_json_dict,
+                )
+            else:
+                llm_response, payload = llm_client.complete_json(system, user, cache_key, safe_load_json_dict)
         cache_hit = bool(getattr(llm_response, "cached", False))
         return {
             "entities_mentioned": _normalize_list_field(payload, "characters", max_items=16),
