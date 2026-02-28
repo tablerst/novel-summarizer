@@ -1,8 +1,7 @@
 llm:
   chat_endpoints:
     storyteller_default:
-      temperature: 0.35      
-      max_tokens: 8192
+      temperature: 0.35            
       max_concurrency: 8
       retries: 2
   embedding_endpoints:
@@ -32,7 +31,7 @@ storyteller:
       include_key_dialogue: false
       include_inner_thoughts: false
       refine_enabled: false
-      entity_extract_mode: "fallback"
+      entity_extract_mode: "llm"
     medium:
       narration_ratio: [0.04, 0.10]
       memory_top_k: 3

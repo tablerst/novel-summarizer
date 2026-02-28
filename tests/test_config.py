@@ -46,6 +46,12 @@ def test_chat_endpoint_validates_optional_max_tokens() -> None:
         ChatEndpointConfig(provider="p", model="m", max_tokens=0)
 
 
+def test_chat_endpoint_accepts_extra_body() -> None:
+    cfg = ChatEndpointConfig(provider="p", model="m", extra_body={"enable_thinking": False})
+
+    assert cfg.extra_body == {"enable_thinking": False}
+
+
 def test_llm_config_validates_endpoint_provider_reference() -> None:
     with pytest.raises(ValidationError):
         LLMConfig.model_validate(

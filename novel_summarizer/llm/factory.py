@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import json
 import os
 import time
 from typing import Any, Callable, Literal, Mapping, TypeVar
@@ -33,6 +34,7 @@ class ResolvedChatRuntime:
     max_concurrency: int
     retries: int
     max_tokens: int | None
+    extra_body: dict[str, Any] | None
     base_url: str | None
     api_key_env: str | None
     api_key: str | None
@@ -46,6 +48,18 @@ def _short_key(value: str | None, length: int = 12) -> str:
     if not value:
         return "-"
     return value[:length]
+
+
+def _extra_body_marker(extra_body: Mapping[str, Any] | None) -> str:
+    if extra_body is None:
+        return "-"
+
+    try:
+        payload = json.dumps(extra_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+        payload = str(extra_body)
+
+    return _short_key(sha256_text(payload))
 
 
 def _coerce_payload_text(payload: Any) -> str:
@@ -100,6 +114,7 @@ def resolve_chat_runtime(
         max_concurrency=endpoint.max_concurrency,
         retries=endpoint.retries,
         max_tokens=endpoint.max_tokens,
+        extra_body=endpoint.extra_body,
         base_url=provider.base_url,
         api_key_env=provider.api_key_env,
         api_key=api_key,
@@ -119,6 +134,9 @@ def _build_chat_model(runtime: ResolvedChatRuntime) -> ChatOpenAI:
 
     if runtime.max_tokens is not None:
         kwargs["max_tokens"] = runtime.max_tokens
+
+    if runtime.extra_body is not None:
+        kwargs["extra_body"] = runtime.extra_body
 
     if runtime.base_url:
         kwargs["base_url"] = runtime.base_url
@@ -156,8 +174,10 @@ class OpenAIChatClient:
         self.runtime = resolve_chat_runtime(config, route)
         self.model = _build_chat_model(self.runtime)
         max_tokens_marker = self.runtime.max_tokens if self.runtime.max_tokens is not None else "provider_default"
+        extra_body_marker = _extra_body_marker(self.runtime.extra_body)
         self.model_identifier = (
-            f"{self.runtime.provider_name}/{self.runtime.endpoint_name}/{self.runtime.model}/max_tokens={max_tokens_marker}"
+            f"{self.runtime.provider_name}/{self.runtime.endpoint_name}/{self.runtime.model}/"
+            f"max_tokens={max_tokens_marker}/extra_body={extra_body_marker}"
         )
         self._async_semaphore = asyncio.Semaphore(max(1, self.runtime.max_concurrency))
 

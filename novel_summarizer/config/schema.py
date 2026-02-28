@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
@@ -75,6 +75,7 @@ class ChatEndpointConfig(BaseModel):
     max_concurrency: int = 6
     retries: int = 3
     max_tokens: int | None = None
+    extra_body: dict[str, Any] | None = None
 
     @field_validator("temperature")
     @classmethod

@@ -30,11 +30,27 @@ llm:
       kind: "openai_compatible"
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       api_key_env: "DASHSCOPE_API_KEY"
+    qwen:
+      kind: "openai_compatible"
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      api_key_env: "DASHSCOPE_API_KEY"
 
   chat_endpoints:
+    storyteller_quick:
+      provider: "qwen"
+      model: "qwen3.5-flash"
+      extra_body:
+        enable_thinking: false
+      temperature: 0.35
+      timeout_s: 600
+      max_concurrency: 4
+      retries: 3
+
     storyteller_default:
-      provider: "deepseek"
-      model: "deepseek-chat"
+      provider: "qwen"
+      model: "qwen3.5-plus"
+      extra_body:
+        enable_thinking: false
       temperature: 0.45
       timeout_s: 600
       max_concurrency: 4
@@ -50,7 +66,7 @@ llm:
 
   routes:
     storyteller_chat: "storyteller_default"
-    storyteller_entity_chat: "storyteller_default"
+    storyteller_entity_chat: "storyteller_quick"
     storyteller_narration_chat: "storyteller_default"
     storyteller_refine_chat: "storyteller_default"
     embedding: "embedding_default"

@@ -39,6 +39,7 @@ def _make_config(*, retries: int, log_payload: bool = True, payload_max_chars: i
                     "storyteller_default": {
                         "provider": "fake",
                         "model": "fake-chat",
+                        "extra_body": {"enable_thinking": False},
                         "temperature": 0.3,
                         "timeout_s": 30,
                         "max_concurrency": 1,
@@ -66,6 +67,26 @@ def _make_config(*, retries: int, log_payload: bool = True, payload_max_chars: i
             },
         }
     )
+
+
+def test_build_chat_model_passes_extra_body(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    class _CaptureChatOpenAI:
+        def __init__(self, **kwargs: Any) -> None:
+            captured_kwargs.update(kwargs)
+
+    monkeypatch.setattr(llm_factory, "ChatOpenAI", _CaptureChatOpenAI)
+
+    config = _make_config(retries=0)
+    cache = SimpleCache(False, "sqlite", tmp_path, ttl_seconds=0)
+    try:
+        client = llm_factory.OpenAIChatClient(config=config, cache=cache, route="storyteller")
+    finally:
+        cache.close()
+
+    assert captured_kwargs.get("extra_body") == {"enable_thinking": False}
+    assert "extra_body=" in client.model_identifier
 
 
 def test_complete_json_logs_raw_payload_on_parse_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
