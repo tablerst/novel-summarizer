@@ -15,6 +15,7 @@ from novel_summarizer.export.markdown import (
     _safe_load_json,
 )
 from novel_summarizer.storage.types import CharacterRow, ChapterRow, ItemRow, NarrationRow, PlotEventRow, WorldFactRow
+from novel_summarizer.storage.types import NarrationOutputRow
 
 
 def test_safe_load_json_extracts_embedded_object() -> None:
@@ -133,6 +134,10 @@ def test_export_storyteller_outputs_uses_latest_narrations_only(tmp_path: Path) 
             _ = book_id
             return [ChapterRow(id=101, idx=1, title="第1章 风起")]
 
+        async def get_narration_output(self, *, narration_id: int):
+            _ = narration_id
+            return None
+
         async def list_character_states(self, book_id: int):
             _ = book_id
             return [
@@ -202,6 +207,7 @@ def test_export_storyteller_outputs_uses_latest_narrations_only(tmp_path: Path) 
             book_id=1,
             output_dir=tmp_path,
             book_title="测试书",
+            step_size=1,
         )
     )
 
@@ -210,4 +216,130 @@ def test_export_storyteller_outputs_uses_latest_narrations_only(tmp_path: Path) 
     full_story = result.full_story_path.read_text(encoding="utf-8")
     assert full_story.count("# 第1章") == 1
     assert "第二版正文" in full_story
+
+
+def test_export_storyteller_outputs_uses_step_range_from_payload(tmp_path: Path) -> None:
+    class _FakeRepo:
+        async def list_latest_narrations_by_book(self, book_id: int):
+            _ = book_id
+            return [
+                NarrationRow(
+                    id=8,
+                    book_id=1,
+                    chapter_id=108,
+                    chapter_idx=8,
+                    narration_text="step聚合正文",
+                    key_events_json=None,
+                    prompt_version="v1-step-aggregate",
+                    model="m",
+                    input_hash="h8",
+                )
+            ]
+
+        async def list_chapters(self, book_id: int):
+            _ = book_id
+            return [ChapterRow(id=108, idx=8, title="第七章 余府")]
+
+        async def get_narration_output(self, *, narration_id: int):
+            _ = narration_id
+            return NarrationOutputRow(
+                id=80,
+                narration_id=8,
+                book_id=1,
+                chapter_id=108,
+                chapter_idx=8,
+                prompt_version="v1-step-aggregate",
+                model="m",
+                input_hash="h8",
+                payload_json='{"step_start_chapter_idx":1,"step_end_chapter_idx":8}',
+            )
+
+        async def list_character_states(self, book_id: int):
+            _ = book_id
+            return []
+
+        async def list_item_states(self, book_id: int):
+            _ = book_id
+            return []
+
+        async def list_plot_events_by_book(self, book_id: int):
+            _ = book_id
+            return []
+
+        async def list_world_facts(self, book_id: int, limit: int = 1000):
+            _ = (book_id, limit)
+            return []
+
+    result = asyncio.run(
+        _export_storyteller_outputs(
+            repo=_FakeRepo(),
+            book_id=1,
+            output_dir=tmp_path,
+            book_title="测试书",
+            step_size=8,
+        )
+    )
+
+    assert result.chapters_dir is not None
+    files = sorted(path.name for path in result.chapters_dir.iterdir())
+    assert files == ["001-008_第七章_余府.md"]
+    content = (result.chapters_dir / files[0]).read_text(encoding="utf-8")
+    assert "# 第1-8章（Step 汇总）" in content
+
+
+def test_export_storyteller_outputs_infers_step_range_when_payload_missing(tmp_path: Path) -> None:
+    class _FakeRepo:
+        async def list_latest_narrations_by_book(self, book_id: int):
+            _ = book_id
+            return [
+                NarrationRow(
+                    id=10,
+                    book_id=1,
+                    chapter_id=110,
+                    chapter_idx=10,
+                    narration_text="step聚合正文2",
+                    key_events_json=None,
+                    prompt_version="v1-step-aggregate",
+                    model="m",
+                    input_hash="h10",
+                )
+            ]
+
+        async def list_chapters(self, book_id: int):
+            _ = book_id
+            return [ChapterRow(id=110, idx=10, title="第九章 法阵")]
+
+        async def get_narration_output(self, *, narration_id: int):
+            _ = narration_id
+            return None
+
+        async def list_character_states(self, book_id: int):
+            _ = book_id
+            return []
+
+        async def list_item_states(self, book_id: int):
+            _ = book_id
+            return []
+
+        async def list_plot_events_by_book(self, book_id: int):
+            _ = book_id
+            return []
+
+        async def list_world_facts(self, book_id: int, limit: int = 1000):
+            _ = (book_id, limit)
+            return []
+
+    result = asyncio.run(
+        _export_storyteller_outputs(
+            repo=_FakeRepo(),
+            book_id=1,
+            output_dir=tmp_path,
+            book_title="测试书",
+            step_size=8,
+        )
+    )
+
+    assert result.chapters_dir is not None
+    files = sorted(path.name for path in result.chapters_dir.iterdir())
+    assert files == ["009-010_第九章_法阵.md"]
 

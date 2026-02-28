@@ -32,6 +32,7 @@ class ResolvedChatRuntime:
     timeout_s: int
     max_concurrency: int
     retries: int
+    max_tokens: int | None
     base_url: str | None
     api_key_env: str | None
     api_key: str | None
@@ -98,6 +99,7 @@ def resolve_chat_runtime(
         timeout_s=endpoint.timeout_s,
         max_concurrency=endpoint.max_concurrency,
         retries=endpoint.retries,
+        max_tokens=endpoint.max_tokens,
         base_url=provider.base_url,
         api_key_env=provider.api_key_env,
         api_key=api_key,
@@ -114,6 +116,9 @@ def _build_chat_model(runtime: ResolvedChatRuntime) -> ChatOpenAI:
         # dramatically increase latency under provider instability.
         "max_retries": 0,
     }
+
+    if runtime.max_tokens is not None:
+        kwargs["max_tokens"] = runtime.max_tokens
 
     if runtime.base_url:
         kwargs["base_url"] = runtime.base_url
@@ -150,7 +155,10 @@ class OpenAIChatClient:
         self.cache = cache
         self.runtime = resolve_chat_runtime(config, route)
         self.model = _build_chat_model(self.runtime)
-        self.model_identifier = f"{self.runtime.provider_name}/{self.runtime.endpoint_name}/{self.runtime.model}"
+        max_tokens_marker = self.runtime.max_tokens if self.runtime.max_tokens is not None else "provider_default"
+        self.model_identifier = (
+            f"{self.runtime.provider_name}/{self.runtime.endpoint_name}/{self.runtime.model}/max_tokens={max_tokens_marker}"
+        )
         self._async_semaphore = asyncio.Semaphore(max(1, self.runtime.max_concurrency))
 
     def _build_log_context(

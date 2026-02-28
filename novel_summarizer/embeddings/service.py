@@ -352,6 +352,261 @@ def _retrieve_vector_records(
     return records
 
 
+def _retrieve_vector_records_for_vector(
+    *,
+    config: AppConfigRoot,
+    table_name: str,
+    query_vector: list[float],
+    top_k: int,
+    source_type: str,
+    source_id_key: str,
+) -> list[dict[str, Any]]:
+    if top_k <= 0:
+        return []
+
+    store = _build_vector_store(config, table_name)
+    table = store.get_table()
+    if table is None:
+        return []
+
+    docs = store.similarity_search_by_vector(query_vector, k=max(top_k, 1))
+    raw_results = _docs_to_records(docs)
+
+    records: list[dict[str, Any]] = []
+    for rank, item in enumerate(raw_results, start=1):
+        source_id = item.get(source_id_key)
+        chapter_idx_raw = item.get("chapter_idx", -1)
+        if source_id is None:
+            continue
+        try:
+            source_id_int = int(source_id)
+            chapter_idx = int(chapter_idx_raw)
+        except (TypeError, ValueError):
+            continue
+        records.append(
+            {
+                "source_type": source_type,
+                "source_id": source_id_int,
+                "chapter_idx": chapter_idx,
+                "chapter_title": str(item.get("chapter_title", "")),
+                "text": str(item.get("text", "")),
+                "vector_rank_score": _norm_rank(rank, len(raw_results)),
+                "keyword_rank_score": 0.0,
+            }
+        )
+    return records
+
+
+async def retrieve_hybrid_memories_batched(
+    *,
+    book_id: int,
+    config: AppConfigRoot,
+    query_texts: list[str],
+    top_k: int,
+    current_chapter_idxs: list[int | None],
+    keyword_terms_list: list[list[str] | None] | None = None,
+    alpha: float = 0.7,
+    beta: float = 0.2,
+) -> list[list[dict[str, Any]]]:
+    """Batched variant of retrieve_hybrid_memories.
+
+    The main win is embedding batching: query vectors are computed in one embed_documents call.
+    Vector similarity search and FTS are still performed per query.
+    """
+
+    if top_k <= 0:
+        return [[] for _ in query_texts]
+    if not query_texts:
+        return []
+    if len(current_chapter_idxs) != len(query_texts):
+        raise ValueError("current_chapter_idxs must match query_texts length")
+
+    keyword_terms_list = keyword_terms_list or [None] * len(query_texts)
+    if len(keyword_terms_list) != len(query_texts):
+        raise ValueError("keyword_terms_list must match query_texts length")
+
+    # 1) Embed all queries in a single remote call.
+    try:
+        client = OpenAIEmbeddingClient(config)
+        embedding_result = await asyncio.to_thread(client.embed_texts, query_texts)
+        vectors = embedding_result.vectors
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Batched embedding failed; falling back to per-query retrieval: {}", exc)
+        results: list[list[dict[str, Any]]] = []
+        for i, text in enumerate(query_texts):
+            results.append(
+                await retrieve_hybrid_memories(
+                    book_id=book_id,
+                    config=config,
+                    query_text=text,
+                    top_k=top_k,
+                    current_chapter_idx=current_chapter_idxs[i],
+                    keyword_terms=keyword_terms_list[i],
+                    alpha=alpha,
+                    beta=beta,
+                )
+            )
+        return results
+
+    if len(vectors) != len(query_texts):
+        raise ValueError("Embedding vectors length mismatch")
+
+    concurrency = int(getattr(config.storyteller, "step_retrieval_concurrency", 0) or 0)
+    if concurrency <= 0:
+        concurrency = 1
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _fts_hits_for_query(
+        *,
+        fts_query: str,
+        current_chapter_idx: int | None,
+    ) -> list[dict[str, Any]]:
+        if not fts_query:
+            return []
+        try:
+            async with session_scope() as session:
+                repo = SQLAlchemyRepo(session)
+                chunk_hits = await repo.search_chunks_fts(
+                    book_id=book_id,
+                    query=fts_query,
+                    before_chapter_idx=current_chapter_idx,
+                    limit=max(top_k * 3, top_k),
+                )
+                narration_hits = await repo.search_narrations_fts(
+                    book_id=book_id,
+                    query=fts_query,
+                    before_chapter_idx=current_chapter_idx,
+                    limit=max(top_k * 2, top_k),
+                )
+            merged_hits = chunk_hits + narration_hits
+            keyword_hits: list[dict[str, Any]] = []
+            for rank, hit in enumerate(merged_hits, start=1):
+                keyword_hits.append(
+                    {
+                        "source_type": hit.source_type,
+                        "source_id": hit.source_id,
+                        "chapter_idx": hit.chapter_idx,
+                        "chapter_title": hit.chapter_title,
+                        "text": hit.text,
+                        "vector_rank_score": 0.0,
+                        "keyword_rank_score": _norm_rank(rank, len(merged_hits)),
+                    }
+                )
+            return keyword_hits
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("FTS retrieval failed (batched): {}", exc)
+            return []
+
+    def _aggregate_and_rank(
+        *,
+        candidates: list[dict[str, Any]],
+        keyword_hits: list[dict[str, Any]],
+        current_chapter_idx: int | None,
+    ) -> list[dict[str, Any]]:
+        aggregated: dict[tuple[str, int], dict[str, Any]] = {}
+
+        def merge(item: dict[str, Any]) -> None:
+            try:
+                source_type = str(item["source_type"])
+                source_id = int(item["source_id"])
+                chapter_idx = int(item["chapter_idx"])
+            except (KeyError, TypeError, ValueError):
+                return
+            if current_chapter_idx is not None and chapter_idx >= current_chapter_idx:
+                return
+
+            key = (source_type, source_id)
+            entry = aggregated.setdefault(
+                key,
+                {
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "chapter_idx": chapter_idx,
+                    "chapter_title": str(item.get("chapter_title", "")),
+                    "text": str(item.get("text", ""))[:800],
+                    "vector_rank_score": 0.0,
+                    "keyword_rank_score": 0.0,
+                },
+            )
+            entry["vector_rank_score"] = max(float(entry["vector_rank_score"]), float(item.get("vector_rank_score", 0.0)))
+            entry["keyword_rank_score"] = max(
+                float(entry["keyword_rank_score"]), float(item.get("keyword_rank_score", 0.0))
+            )
+
+        for item in candidates:
+            merge(item)
+        for item in keyword_hits:
+            merge(item)
+
+        results: list[dict[str, Any]] = []
+        for entry in aggregated.values():
+            proximity = _proximity_score(current_chapter_idx, int(entry["chapter_idx"]))
+            vector_component = float(entry["vector_rank_score"])
+            keyword_component = float(entry["keyword_rank_score"])
+            score = alpha * vector_component + (1 - alpha) * keyword_component + beta * proximity
+            entry["score"] = score
+            entry["proximity_score"] = proximity
+            results.append(entry)
+
+        results.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        return results[:top_k]
+
+    async def _run_one_query(i: int) -> list[dict[str, Any]]:
+        async with semaphore:
+            query_text = query_texts[i]
+            query_vector = vectors[i]
+            current_chapter_idx = current_chapter_idxs[i]
+            keyword_terms = keyword_terms_list[i]
+
+            terms = _extract_keyword_terms(query_text, keyword_terms)
+            fts_query = _build_fts_query(terms)
+
+            async def _chunk_vec() -> list[dict[str, Any]]:
+                try:
+                    return await asyncio.to_thread(
+                        _retrieve_vector_records_for_vector,
+                        config=config,
+                        table_name=_chunks_table_name(book_id),
+                        query_vector=query_vector,
+                        top_k=max(top_k * 3, top_k),
+                        source_type="chunk",
+                        source_id_key="chunk_id",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Chunk vector retrieval failed (batched): {}", exc)
+                    return []
+
+            async def _nar_vec() -> list[dict[str, Any]]:
+                try:
+                    return await asyncio.to_thread(
+                        _retrieve_vector_records_for_vector,
+                        config=config,
+                        table_name=_narrations_table_name(book_id),
+                        query_vector=query_vector,
+                        top_k=max(top_k * 2, top_k),
+                        source_type="narration",
+                        source_id_key="narration_id",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Narration vector retrieval failed (batched): {}", exc)
+                    return []
+
+            chunk_candidates, narration_candidates, keyword_hits = await asyncio.gather(
+                _chunk_vec(),
+                _nar_vec(),
+                _fts_hits_for_query(fts_query=fts_query, current_chapter_idx=current_chapter_idx),
+            )
+            candidates = list(chunk_candidates) + list(narration_candidates)
+            return _aggregate_and_rank(
+                candidates=candidates,
+                keyword_hits=keyword_hits,
+                current_chapter_idx=current_chapter_idx,
+            )
+
+    tasks = [asyncio.create_task(_run_one_query(i)) for i in range(len(query_texts))]
+    return await asyncio.gather(*tasks)
+
+
 async def prepare_retrieval_assets(book_id: int, config: AppConfigRoot, batch_size: int = 32) -> RetrievalAssetsStats:
     chunk_stats = await embed_book_chunks(book_id=book_id, config=config, batch_size=batch_size)
     narration_stats = await embed_book_narrations(book_id=book_id, config=config, batch_size=batch_size)

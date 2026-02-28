@@ -39,3 +39,22 @@ def safe_load_json_dict(text: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Expected JSON object")
     return payload
+
+
+def safe_load_json_list(text: str) -> list[Any]:
+    if not text or not text.strip():
+        raise ValueError("Empty JSON text")
+
+    candidate = _sanitize_json_text(_strip_code_fence(text))
+    try:
+        payload = orjson.loads(candidate)
+    except orjson.JSONDecodeError:
+        start = candidate.find("[")
+        end = candidate.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        payload = orjson.loads(candidate[start : end + 1])
+
+    if not isinstance(payload, list):
+        raise ValueError("Expected JSON array")
+    return payload

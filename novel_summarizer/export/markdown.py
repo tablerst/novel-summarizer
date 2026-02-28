@@ -156,7 +156,60 @@ def _render_legacy_timeline(events: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _render_chapter_narration(chapter_idx: int, chapter_title: str, narration: str) -> str:
+def _is_step_prompt_version(prompt_version: str) -> bool:
+    return "step" in prompt_version.lower()
+
+
+def _extract_step_range(payload_json: str | None) -> tuple[int, int] | None:
+    if not payload_json:
+        return None
+    try:
+        payload = orjson.loads(payload_json)
+    except orjson.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    start_raw = payload.get("step_start_chapter_idx")
+    end_raw = payload.get("step_end_chapter_idx")
+    if start_raw is None or end_raw is None:
+        return None
+
+    try:
+        start = int(start_raw)
+        end = int(end_raw)
+    except (TypeError, ValueError):
+        return None
+
+    if start <= 0 or end <= 0 or start > end:
+        return None
+    return start, end
+
+
+def _infer_step_range_from_anchor(*, chapter_idx: int, step_size: int) -> tuple[int, int] | None:
+    if chapter_idx <= 0 or step_size <= 1:
+        return None
+    start = ((chapter_idx - 1) // step_size) * step_size + 1
+    if start >= chapter_idx:
+        return None
+    return start, chapter_idx
+
+
+def _render_chapter_narration(
+    chapter_idx: int,
+    chapter_title: str,
+    narration: str,
+    *,
+    step_range: tuple[int, int] | None = None,
+) -> str:
+    if step_range is not None:
+        step_start, step_end = step_range
+        if step_start > 0 and step_end >= step_start and (step_start != chapter_idx or step_end != chapter_idx):
+            return (
+                f"# 第{step_start}-{step_end}章（Step 汇总）\n\n"
+                f"> 锚点章节：第{chapter_idx}章 {chapter_title}\n\n"
+                f"{narration}\n"
+            )
     return f"# 第{chapter_idx}章 {chapter_title}\n\n{narration}\n"
 
 
@@ -166,6 +219,7 @@ async def _export_storyteller_outputs(
     book_id: int,
     output_dir: Path,
     book_title: str | None,
+    step_size: int,
 ) -> ExportResult:
     narrations = await repo.list_latest_narrations_by_book(book_id)
     chapters = await repo.list_chapters(book_id)
@@ -173,12 +227,33 @@ async def _export_storyteller_outputs(
 
     chapters_dir = output_dir / "chapters"
     chapters_dir.mkdir(parents=True, exist_ok=True)
+    for stale_file in chapters_dir.glob("*.md"):
+        stale_file.unlink()
 
     merged_parts: list[str] = []
     for row in narrations:
+        step_range: tuple[int, int] | None = None
+        narration_output = await repo.get_narration_output(narration_id=row.id)
+        if narration_output is not None:
+            step_range = _extract_step_range(narration_output.payload_json)
+
+        if step_range is None and _is_step_prompt_version(row.prompt_version):
+            step_range = _infer_step_range_from_anchor(chapter_idx=int(row.chapter_idx), step_size=max(1, int(step_size)))
+
         chapter_title = chapter_title_map.get(row.chapter_id, f"第{row.chapter_idx}章")
-        chapter_content = _render_chapter_narration(row.chapter_idx, chapter_title, row.narration_text)
-        chapter_filename = f"{int(row.chapter_idx):03d}_{_safe_filename(chapter_title)}.md"
+        chapter_content = _render_chapter_narration(
+            row.chapter_idx,
+            chapter_title,
+            row.narration_text,
+            step_range=step_range,
+        )
+
+        if step_range is not None:
+            step_start, step_end = step_range
+            chapter_filename = f"{int(step_start):03d}-{int(step_end):03d}_{_safe_filename(chapter_title)}.md"
+        else:
+            chapter_filename = f"{int(row.chapter_idx):03d}_{_safe_filename(chapter_title)}.md"
+
         (chapters_dir / chapter_filename).write_text(chapter_content, encoding="utf-8")
         merged_parts.append(chapter_content)
 
@@ -315,6 +390,7 @@ async def export_book_markdown(
                 book_id=book_id,
                 output_dir=output_dir,
                 book_title=book.title,
+                step_size=int(config.storyteller.step_size),
             )
 
         if mode == "legacy":
@@ -331,6 +407,7 @@ async def export_book_markdown(
                 book_id=book_id,
                 output_dir=output_dir,
                 book_title=book.title,
+                step_size=int(config.storyteller.step_size),
             )
 
         return await _export_legacy_outputs(

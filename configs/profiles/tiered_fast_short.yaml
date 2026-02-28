@@ -2,6 +2,7 @@ llm:
   chat_endpoints:
     storyteller_default:
       temperature: 0.35      
+      max_tokens: 8192
       max_concurrency: 8
       retries: 2
   embedding_endpoints:
@@ -11,6 +12,11 @@ llm:
 storyteller:
   narration_temperature: 0.35
   prefetch_window: 1
+  # Optional step mode (uncomment to enable)
+  step_size: 8
+  step_align: "off"
+  # step_memory_mode: "per_step_shared"
+  # step_retrieval_concurrency: 12
   tiering:
     enabled: true
     default_tier: "short"
@@ -21,21 +27,21 @@ storyteller:
       - "突破"
       - "渡劫"
     short:
-      narration_ratio: [0.06, 0.10]
+      narration_ratio: [0.01, 0.04]
       memory_top_k: 2
       include_key_dialogue: false
       include_inner_thoughts: false
       refine_enabled: false
       entity_extract_mode: "fallback"
     medium:
-      narration_ratio: [0.10, 0.15]
+      narration_ratio: [0.04, 0.10]
       memory_top_k: 3
       include_key_dialogue: true
       include_inner_thoughts: false
       refine_enabled: false
       entity_extract_mode: "llm"
     long:
-      narration_ratio: [0.15, 0.20]
+      narration_ratio: [0.10, 0.20]
       memory_top_k: 4
       include_key_dialogue: true
       include_inner_thoughts: true

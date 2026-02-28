@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import orjson
+
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from novel_summarizer.storage.books import crud as books_crud
 from novel_summarizer.storage.chapters import crud as chapters_crud
 from novel_summarizer.storage.chunks import crud as chunks_crud
 from novel_summarizer.storage.narrations import crud as narrations_crud
+from novel_summarizer.storage.narration_outputs import crud as narration_outputs_crud
 from novel_summarizer.storage.summaries import crud as summaries_crud
 from novel_summarizer.storage.types import (
     BookRow,
@@ -15,15 +19,23 @@ from novel_summarizer.storage.types import (
     InsertResult,
     ItemRow,
     NarrationRow,
+    NarrationOutputRow,
     PlotEventRow,
     SearchHitRow,
     SummaryRow,
     WorldFactRow,
+    WorldStateCheckpointRow,
 )
 from novel_summarizer.storage.world_state import characters as characters_crud
+from novel_summarizer.storage.world_state import checkpoints as checkpoints_crud
 from novel_summarizer.storage.world_state import items as items_crud
 from novel_summarizer.storage.world_state import plot_events as plot_events_crud
 from novel_summarizer.storage.world_state import world_facts as world_facts_crud
+
+from novel_summarizer.storage.world_state.characters import CharacterState
+from novel_summarizer.storage.world_state.items import ItemState
+from novel_summarizer.storage.world_state.plot_events import PlotEvent
+from novel_summarizer.storage.world_state.world_facts import WorldFact
 
 
 class SQLAlchemyRepo:
@@ -173,6 +185,36 @@ class SQLAlchemyRepo:
             prompt_version=prompt_version,
             model=model,
             input_hash=input_hash,
+        )
+
+    async def get_narration_output(self, *, narration_id: int) -> NarrationOutputRow | None:
+        return await narration_outputs_crud.get_narration_output(self.session, narration_id)
+
+    async def get_latest_narration_output_for_chapter(self, *, chapter_id: int) -> NarrationOutputRow | None:
+        return await narration_outputs_crud.get_latest_narration_output_for_chapter(self.session, chapter_id)
+
+    async def upsert_narration_output(
+        self,
+        *,
+        narration_id: int,
+        book_id: int,
+        chapter_id: int,
+        chapter_idx: int,
+        prompt_version: str,
+        model: str,
+        input_hash: str,
+        payload_json: str,
+    ) -> InsertResult:
+        return await narration_outputs_crud.upsert_narration_output(
+            self.session,
+            narration_id=narration_id,
+            book_id=book_id,
+            chapter_id=chapter_id,
+            chapter_idx=chapter_idx,
+            prompt_version=prompt_version,
+            model=model,
+            input_hash=input_hash,
+            payload_json=payload_json,
         )
 
     async def list_character_states(self, book_id: int, canonical_names: list[str] | None = None) -> list[CharacterRow]:
@@ -339,3 +381,152 @@ class SQLAlchemyRepo:
             content=content,
             params_json=params_json,
         )
+
+    async def get_latest_world_state_checkpoint_at_or_before(
+        self,
+        *,
+        book_id: int,
+        chapter_idx: int,
+    ) -> WorldStateCheckpointRow | None:
+        return await checkpoints_crud.get_latest_checkpoint_at_or_before(
+            self.session,
+            book_id=book_id,
+            chapter_idx=chapter_idx,
+        )
+
+    async def upsert_world_state_checkpoint(
+        self,
+        *,
+        book_id: int,
+        chapter_idx: int,
+        step_size: int,
+        snapshot_json: str,
+        snapshot_hash: str,
+    ) -> InsertResult:
+        return await checkpoints_crud.upsert_checkpoint(
+            self.session,
+            book_id=book_id,
+            chapter_idx=chapter_idx,
+            step_size=step_size,
+            snapshot_json=snapshot_json,
+            snapshot_hash=snapshot_hash,
+        )
+
+    async def clear_world_state_for_book(self, *, book_id: int) -> None:
+        """Clears all hard world-state tables for a book.
+
+        This is used by step checkpoint restore to avoid plot_events duplication and state drift.
+        """
+
+        await self.session.execute(delete(PlotEvent).where(PlotEvent.book_id == book_id))
+        await self.session.execute(delete(CharacterState).where(CharacterState.book_id == book_id))
+        await self.session.execute(delete(ItemState).where(ItemState.book_id == book_id))
+        await self.session.execute(delete(WorldFact).where(WorldFact.book_id == book_id))
+
+    async def restore_world_state_checkpoint(self, *, checkpoint: WorldStateCheckpointRow) -> None:
+        """Restores world_state tables to the snapshot stored in a checkpoint.
+
+        The restore is performed by clearing relevant tables for checkpoint.book_id and bulk-inserting
+        snapshot rows. This avoids plot_events endless append pollution.
+        """
+
+        payload = orjson.loads(checkpoint.snapshot_json)
+        if not isinstance(payload, dict):
+            raise ValueError("checkpoint snapshot_json must decode to a JSON object")
+
+        book_id = int(checkpoint.book_id)
+        await self.clear_world_state_for_book(book_id=book_id)
+
+        characters = payload.get("characters") or []
+        items = payload.get("items") or []
+        plot_events = payload.get("plot_events") or []
+        world_facts = payload.get("world_facts") or []
+
+        if not (
+            isinstance(characters, list)
+            and isinstance(items, list)
+            and isinstance(plot_events, list)
+            and isinstance(world_facts, list)
+        ):
+            raise ValueError("checkpoint snapshot_json has invalid structure")
+
+        def _normalize_rows(rows: list[object], *, allowed: set[str]) -> list[dict]:
+            normalized: list[dict] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                cleaned = {k: v for k, v in row.items() if k in allowed}
+                cleaned["book_id"] = book_id
+                normalized.append(cleaned)
+            return normalized
+
+        if characters:
+            await self.session.execute(
+                CharacterState.__table__.insert(),
+                _normalize_rows(
+                    characters,
+                    allowed={
+                        "id",
+                        "book_id",
+                        "canonical_name",
+                        "aliases_json",
+                        "first_chapter_idx",
+                        "last_chapter_idx",
+                        "status",
+                        "location",
+                        "abilities_json",
+                        "relationships_json",
+                        "motivation",
+                        "notes",
+                    },
+                ),
+            )
+        if items:
+            await self.session.execute(
+                ItemState.__table__.insert(),
+                _normalize_rows(
+                    items,
+                    allowed={
+                        "id",
+                        "book_id",
+                        "name",
+                        "owner_name",
+                        "first_chapter_idx",
+                        "last_chapter_idx",
+                        "description",
+                        "status",
+                    },
+                ),
+            )
+        if plot_events:
+            await self.session.execute(
+                PlotEvent.__table__.insert(),
+                _normalize_rows(
+                    plot_events,
+                    allowed={
+                        "id",
+                        "book_id",
+                        "chapter_idx",
+                        "event_summary",
+                        "involved_characters_json",
+                        "event_type",
+                        "impact",
+                    },
+                ),
+            )
+        if world_facts:
+            await self.session.execute(
+                WorldFact.__table__.insert(),
+                _normalize_rows(
+                    world_facts,
+                    allowed={
+                        "id",
+                        "book_id",
+                        "fact_key",
+                        "fact_value",
+                        "confidence",
+                        "source_chapter_idx",
+                        "source_excerpt",
+                    },
+                ),
+            )

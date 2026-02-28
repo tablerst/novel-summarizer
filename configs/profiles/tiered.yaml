@@ -1,5 +1,9 @@
 storyteller:
   prefetch_window: 2
+  # Optional step mode (uncomment to enable)
+  # step_size: 8
+  # step_memory_mode: "per_chapter"
+  # step_retrieval_concurrency: 8
   tiering:
     enabled: true
     default_tier: "short"

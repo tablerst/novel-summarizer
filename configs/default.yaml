@@ -27,9 +27,9 @@ llm:
       base_url: "https://api.deepseek.com/v1"
       api_key_env: "DEEPSEEK_API_KEY"
     local_embedding:
-      kind: "ollama"
-      base_url: "http://localhost:11434"
-      api_key_env: null
+      kind: "openai_compatible"
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      api_key_env: "DASHSCOPE_API_KEY"
 
   chat_endpoints:
     storyteller_default:
@@ -43,7 +43,7 @@ llm:
   embedding_endpoints:
     embedding_default:
       provider: "local_embedding"
-      model: "qwen3-embedding:4b"
+      model: "text-embedding-v4"
       timeout_s: 60
       max_concurrency: 6
       retries: 3
@@ -71,6 +71,19 @@ storyteller:
   refine_temperature: 0.35
   evidence_min_support_score: 0.18
   evidence_max_snippets: 3
+
+  # Step execution (multi-chapter batching)
+  # Defaults keep legacy behavior: step_size=1 means per-chapter execution.
+  step_size: 5
+  step_align: "auto" # auto | off
+  step_checkpoint_enabled: true
+  step_resume_mode: "restore" # continue | restore
+  step_memory_mode: "per_chapter" # per_chapter | per_step_shared | off
+  step_refine_mode: "inline" # inline | off
+
+  # Retrieval concurrency in step mode.
+  # 0/1: sequential. >1: concurrent (bounded by semaphore).
+  step_retrieval_concurrency: 6
 
 storage:
   sqlite_path: "./data/novel.db"

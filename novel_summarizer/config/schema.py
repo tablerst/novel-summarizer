@@ -74,6 +74,7 @@ class ChatEndpointConfig(BaseModel):
     timeout_s: int = 60
     max_concurrency: int = 6
     retries: int = 3
+    max_tokens: int | None = None
 
     @field_validator("temperature")
     @classmethod
@@ -87,6 +88,13 @@ class ChatEndpointConfig(BaseModel):
     def _non_negative_int(cls, value: int) -> int:
         if value < 0:
             raise ValueError("endpoint integer settings must be non-negative")
+        return value
+
+    @field_validator("max_tokens")
+    @classmethod
+    def _positive_optional_max_tokens(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("max_tokens must be positive when provided")
         return value
 
 
@@ -308,6 +316,15 @@ class StorytellerConfig(BaseModel):
     prefetch_window: int = 0
     tiering: StorytellerTieringConfig = StorytellerTieringConfig()
 
+    # Step execution (multi-chapter batching) controls. Defaults keep legacy behavior.
+    step_size: int = 1
+    step_align: Literal["auto", "off"] = "auto"
+    step_checkpoint_enabled: bool = True
+    step_resume_mode: Literal["continue", "restore"] = "restore"
+    step_memory_mode: Literal["per_chapter", "per_step_shared", "off"] = "per_chapter"
+    step_refine_mode: Literal["inline", "off"] = "inline"
+    step_retrieval_concurrency: int = 6
+
     @field_validator("narration_temperature", "entity_temperature", "state_temperature", "refine_temperature")
     @classmethod
     def _temperature_range(cls, value: float) -> float:
@@ -327,6 +344,20 @@ class StorytellerConfig(BaseModel):
     def _non_negative_prefetch_window(cls, value: int) -> int:
         if value < 0:
             raise ValueError("prefetch_window must be non-negative")
+        return value
+
+    @field_validator("step_size")
+    @classmethod
+    def _validate_step_size(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("step_size must be a positive integer")
+        return value
+
+    @field_validator("step_retrieval_concurrency")
+    @classmethod
+    def _validate_step_retrieval_concurrency(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("step_retrieval_concurrency must be non-negative")
         return value
 
     @field_validator("evidence_max_snippets")

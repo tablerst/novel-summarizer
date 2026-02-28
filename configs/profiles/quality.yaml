@@ -14,3 +14,8 @@ storyteller:
   narration_ratio: [0.45, 0.55]
   narration_temperature: 0.5
   memory_top_k: 10
+
+  # Optional step mode (uncomment to enable)
+  # step_size: 5
+  # step_memory_mode: "per_chapter"
+  # step_retrieval_concurrency: 6

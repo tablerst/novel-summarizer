@@ -120,3 +120,49 @@ def test_embed_book_narrations_uses_latest_list(monkeypatch) -> None:
     assert stats.narrations_total == 1
     assert stats.narrations_embedded == 1
     assert stats.narrations_skipped == 0
+
+
+def test_retrieve_hybrid_memories_batched_embeds_once(monkeypatch) -> None:
+    class _FakeStore:
+        def get_table(self):
+            return object()
+
+        def similarity_search_by_vector(self, *args, **kwargs):
+            _ = (args, kwargs)
+            return []
+
+    class _EmbeddingResult:
+        def __init__(self, vectors):
+            self.vectors = vectors
+
+    class _FakeEmbedClient:
+        def __init__(self, config):
+            _ = config
+            self.calls: list[list[str]] = []
+
+        def embed_texts(self, texts: list[str]):
+            self.calls.append(list(texts))
+            # Two query vectors, one per query.
+            return _EmbeddingResult(vectors=[[0.1, 0.2], [0.3, 0.4]])
+
+    fake_client = _FakeEmbedClient(AppConfigRoot())
+
+    # Monkeypatch constructors/helpers to avoid touching real LanceDB/SQLite.
+    monkeypatch.setattr(service, "OpenAIEmbeddingClient", lambda config: fake_client)
+    monkeypatch.setattr(service, "_build_vector_store", lambda config, table_name: _FakeStore())
+    monkeypatch.setattr(service, "_docs_to_records", lambda docs: [])
+    monkeypatch.setattr(service, "_extract_keyword_terms", lambda query_text, terms, max_terms=8: [])
+
+    outputs = asyncio.run(
+        service.retrieve_hybrid_memories_batched(
+            book_id=1,
+            config=AppConfigRoot(),
+            query_texts=["q1", "q2"],
+            top_k=3,
+            current_chapter_idxs=[10, 10],
+            keyword_terms_list=[["韩立"], ["掌天瓶"]],
+        )
+    )
+
+    assert fake_client.calls == [["q1", "q2"]]
+    assert outputs == [[], []]

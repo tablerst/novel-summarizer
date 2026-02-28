@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import re
 import time
 from typing import Any
 
@@ -110,10 +111,64 @@ class OllamaEmbeddingsModel:
         return embeddings[0]
 
 
-def _build_openai_embeddings_model(runtime: ResolvedEmbeddingRuntime) -> OpenAIEmbeddings:
+def _extract_batch_limit(error_text: str) -> int | None:
+    match = re.search(r"larger than\s+(\d+)", error_text)
+    if not match:
+        return None
+    try:
+        limit = int(match.group(1))
+    except ValueError:
+        return None
+    return limit if limit > 0 else None
+
+
+class OpenAICompatibleEmbeddingsModel:
+    def __init__(self, model: OpenAIEmbeddings, default_max_batch_size: int | None = None):
+        self._model = model
+        self._default_max_batch_size = default_max_batch_size
+
+    def _embed_in_batches(self, texts: list[str], max_batch_size: int) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), max_batch_size):
+            chunk = texts[start : start + max_batch_size]
+            vectors.extend(self._model.embed_documents(chunk))
+        return vectors
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        if self._default_max_batch_size and len(texts) > self._default_max_batch_size:
+            return self._embed_in_batches(texts, self._default_max_batch_size)
+
+        try:
+            return self._model.embed_documents(texts)
+        except Exception as exc:  # noqa: BLE001
+            inferred_limit = _extract_batch_limit(str(exc))
+            if inferred_limit is None or len(texts) <= inferred_limit:
+                raise
+            return self._embed_in_batches(texts, inferred_limit)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._model.embed_query(text)
+
+
+def _default_embedding_batch_limit(runtime: ResolvedEmbeddingRuntime) -> int | None:
+    base = (runtime.base_url or "").lower()
+    if "dashscope.aliyuncs.com" in base:
+        return 10
+    return None
+
+
+def _build_openai_embeddings_model(runtime: ResolvedEmbeddingRuntime) -> OpenAICompatibleEmbeddingsModel:
     kwargs: dict[str, Any] = {
         "model": runtime.model,
         "max_retries": runtime.retries,
+        # Some OpenAI-compatible providers (for example DashScope compatible mode)
+        # reject token-array embedding inputs and only accept raw strings.
+        # Disable local token-length preprocessing to keep request inputs as strings.
+        "check_embedding_ctx_length": False,
+        "tiktoken_enabled": False,
     }
 
     if runtime.base_url:
@@ -122,12 +177,16 @@ def _build_openai_embeddings_model(runtime: ResolvedEmbeddingRuntime) -> OpenAIE
         kwargs["api_key"] = runtime.api_key
 
     try:
-        return OpenAIEmbeddings(**kwargs)
+        model = OpenAIEmbeddings(**kwargs)
     except TypeError:
+        kwargs.pop("check_embedding_ctx_length", None)
+        kwargs.pop("tiktoken_enabled", None)
         kwargs.pop("base_url", None)
         kwargs.pop("api_key", None)
         kwargs.pop("max_retries", None)
-        return OpenAIEmbeddings(**kwargs)
+        model = OpenAIEmbeddings(**kwargs)
+
+    return OpenAICompatibleEmbeddingsModel(model, default_max_batch_size=_default_embedding_batch_limit(runtime))
 
 
 def _build_embeddings_model(runtime: ResolvedEmbeddingRuntime):

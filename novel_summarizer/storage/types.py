@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -35,6 +36,19 @@ class NarrationRow:
     prompt_version: str
     model: str
     input_hash: str
+
+
+@dataclass
+class NarrationOutputRow:
+    id: int
+    narration_id: int
+    book_id: int
+    chapter_id: int
+    chapter_idx: int
+    prompt_version: str
+    model: str
+    input_hash: str
+    payload_json: str
 
 
 @dataclass
@@ -116,3 +130,15 @@ class WorldFactRow:
     confidence: float
     source_chapter_idx: int | None
     source_excerpt: str | None
+
+
+@dataclass
+class WorldStateCheckpointRow:
+    id: int
+    book_id: int
+    chapter_idx: int
+    step_size: int
+    snapshot_json: str
+    snapshot_hash: str
+    created_at: datetime
+    updated_at: datetime

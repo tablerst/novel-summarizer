@@ -69,3 +69,131 @@ def test_ollama_embedding_url_normalization(base_url: str, expected_embed_url: s
 
     assert client.runtime.provider_kind == "ollama"
     assert getattr(client.model, "embed_url") == expected_embed_url
+
+
+def test_openai_compatible_embedding_disables_token_preprocessing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_kwargs: dict = {}
+
+    class _DummyEmbeddings:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] for _ in texts]
+
+        def embed_query(self, text: str) -> list[float]:
+            return [0.0]
+
+    monkeypatch.setattr("novel_summarizer.llm.embeddings.OpenAIEmbeddings", _DummyEmbeddings)
+
+    config = AppConfigRoot.model_validate(
+        {
+            "llm": {
+                "providers": {
+                    "embedding_provider": {
+                        "kind": "openai_compatible",
+                        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "api_key_env": None,
+                    },
+                    "chat_provider": {
+                        "kind": "openai_compatible",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "api_key_env": None,
+                    },
+                },
+                "chat_endpoints": {
+                    "storyteller_default": {
+                        "provider": "chat_provider",
+                        "model": "deepseek-chat",
+                        "temperature": 0.3,
+                        "timeout_s": 60,
+                        "max_concurrency": 2,
+                        "retries": 1,
+                    }
+                },
+                "embedding_endpoints": {
+                    "embedding_default": {
+                        "provider": "embedding_provider",
+                        "model": "text-embedding-v4",
+                        "timeout_s": 60,
+                        "max_concurrency": 2,
+                        "retries": 1,
+                    }
+                },
+                "routes": {
+                    "storyteller_chat": "storyteller_default",
+                    "embedding": "embedding_default",
+                },
+            }
+        }
+    )
+
+    _ = OpenAIEmbeddingClient(config)
+
+    assert captured_kwargs["check_embedding_ctx_length"] is False
+    assert captured_kwargs["tiktoken_enabled"] is False
+
+
+def test_openai_compatible_embedding_auto_batches_for_dashscope(monkeypatch: pytest.MonkeyPatch) -> None:
+    call_sizes: list[int] = []
+
+    class _DummyEmbeddings:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            call_sizes.append(len(texts))
+            return [[0.0] for _ in texts]
+
+        def embed_query(self, text: str) -> list[float]:
+            return [0.0]
+
+    monkeypatch.setattr("novel_summarizer.llm.embeddings.OpenAIEmbeddings", _DummyEmbeddings)
+
+    config = AppConfigRoot.model_validate(
+        {
+            "llm": {
+                "providers": {
+                    "embedding_provider": {
+                        "kind": "openai_compatible",
+                        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "api_key_env": None,
+                    },
+                    "chat_provider": {
+                        "kind": "openai_compatible",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "api_key_env": None,
+                    },
+                },
+                "chat_endpoints": {
+                    "storyteller_default": {
+                        "provider": "chat_provider",
+                        "model": "deepseek-chat",
+                        "temperature": 0.3,
+                        "timeout_s": 60,
+                        "max_concurrency": 2,
+                        "retries": 1,
+                    }
+                },
+                "embedding_endpoints": {
+                    "embedding_default": {
+                        "provider": "embedding_provider",
+                        "model": "text-embedding-v4",
+                        "timeout_s": 60,
+                        "max_concurrency": 2,
+                        "retries": 1,
+                    }
+                },
+                "routes": {
+                    "storyteller_chat": "storyteller_default",
+                    "embedding": "embedding_default",
+                },
+            }
+        }
+    )
+
+    client = OpenAIEmbeddingClient(config)
+    vectors = client.model.embed_documents([f"chunk-{idx}" for idx in range(21)])
+
+    assert len(vectors) == 21
+    assert call_sizes == [10, 10, 1]

@@ -10,3 +10,8 @@ storyteller:
   include_inner_thoughts: false
   refine_enabled: false
   evidence_max_snippets: 2
+
+  # Optional step mode (uncomment to enable)
+  step_size: 8
+  # step_memory_mode: "per_step_shared"
+  # step_retrieval_concurrency: 12

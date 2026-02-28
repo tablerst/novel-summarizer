@@ -50,6 +50,12 @@ def _build_parser() -> argparse.ArgumentParser:
     storytell_parser.add_argument("--book-id", type=int, required=True, help="Book id to process")
     storytell_parser.add_argument("--from-chapter", type=int, default=None, help="Start chapter idx (inclusive)")
     storytell_parser.add_argument("--to-chapter", type=int, default=None, help="End chapter idx (inclusive)")
+    storytell_parser.add_argument(
+        "--step-size",
+        type=int,
+        default=None,
+        help="Process chapters in steps (multi-chapter batches). Overrides storyteller.step_size.",
+    )
 
     export_parser = subparsers.add_parser("export", help="Export markdown outputs from storyteller or legacy data")
     export_parser.add_argument("--book-id", type=int, required=True, help="Book id to export")
@@ -73,6 +79,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--from-chapter", type=int, default=None, help="Start chapter idx (inclusive)")
     run_parser.add_argument("--to-chapter", type=int, default=None, help="End chapter idx (inclusive)")
     run_parser.add_argument("--no-export", action="store_true", help="Skip markdown export")
+    run_parser.add_argument(
+        "--step-size",
+        type=int,
+        default=None,
+        help="Process chapters in steps (multi-chapter batches). Overrides storyteller.step_size.",
+    )
 
     return parser
 
@@ -86,6 +98,13 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
         app_overrides["data_dir"] = str(args.data_dir)
     if app_overrides:
         overrides["app"] = app_overrides
+
+    storyteller_overrides: dict[str, Any] = {}
+    if hasattr(args, "step_size") and args.step_size is not None:
+        storyteller_overrides["step_size"] = int(args.step_size)
+    if storyteller_overrides:
+        overrides["storyteller"] = storyteller_overrides
+
     return overrides
 
 

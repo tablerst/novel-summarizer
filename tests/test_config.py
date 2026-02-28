@@ -38,6 +38,14 @@ def test_chat_endpoint_validates_temperature() -> None:
         ChatEndpointConfig(provider="p", model="m", temperature=2.5)
 
 
+def test_chat_endpoint_validates_optional_max_tokens() -> None:
+    cfg = ChatEndpointConfig(provider="p", model="m", max_tokens=8192)
+    assert cfg.max_tokens == 8192
+
+    with pytest.raises(ValidationError):
+        ChatEndpointConfig(provider="p", model="m", max_tokens=0)
+
+
 def test_llm_config_validates_endpoint_provider_reference() -> None:
     with pytest.raises(ValidationError):
         LLMConfig.model_validate(
@@ -262,6 +270,21 @@ def test_llm_route_summarize_falls_back_to_storyteller() -> None:
 def test_storyteller_prefetch_window_validation() -> None:
     with pytest.raises(ValidationError):
         AppConfigRoot.model_validate({"storyteller": {"prefetch_window": -1}})
+
+
+def test_storyteller_step_defaults_and_validation() -> None:
+    config = AppConfigRoot()
+    assert config.storyteller.step_size == 1
+    assert config.storyteller.step_align == "auto"
+    assert config.storyteller.step_checkpoint_enabled is True
+    assert config.storyteller.step_resume_mode == "restore"
+    assert config.storyteller.step_retrieval_concurrency >= 0
+
+    with pytest.raises(ValidationError):
+        AppConfigRoot.model_validate({"storyteller": {"step_size": 0}})
+
+    with pytest.raises(ValidationError):
+        AppConfigRoot.model_validate({"storyteller": {"step_retrieval_concurrency": -1}})
 
 
 def test_llm_route_storyteller_node_specific_override() -> None:
