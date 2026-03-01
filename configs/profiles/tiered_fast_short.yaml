@@ -25,23 +25,25 @@ storyteller:
       - "大战"
       - "突破"
       - "渡劫"
+      - "身死"
+      - "宗门"
     short:
-      narration_ratio: [0.01, 0.04]
+      narration_ratio: [0.06, 0.15]
       memory_top_k: 2
       include_key_dialogue: false
       include_inner_thoughts: false
       refine_enabled: false
       entity_extract_mode: "llm"
     medium:
-      narration_ratio: [0.04, 0.10]
+      narration_ratio: [0.12, 0.20]
       memory_top_k: 3
       include_key_dialogue: true
       include_inner_thoughts: false
       refine_enabled: false
       entity_extract_mode: "llm"
     long:
-      narration_ratio: [0.10, 0.20]
-      memory_top_k: 4
+      narration_ratio: [0.18, 0.30]
+      memory_top_k: 5
       include_key_dialogue: true
       include_inner_thoughts: true
       refine_enabled: true
