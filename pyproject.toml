@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "aiofile>=3.9.0",
     "aiosqlite>=0.22.1",
+    "beautifulsoup4>=4.14.3",
     "cashew>=0.4.1",
+    "ebooklib>=0.20",
     "httpx[http2]>=0.28.1",
     "lancedb>=0.26.1",
     "langchain>=1.2.4",
@@ -15,6 +17,7 @@ dependencies = [
     "langchain-openai>=1.1.7",
     "langgraph>=1.0.6",
     "loguru>=0.7.3",
+    "markdownify>=1.2.2",
     "mcp>=1.25.0",
     "orjson>=3.11.5",
     "pandas>=2.3.3",
@@ -32,12 +35,12 @@ novel-summarizer = "novel_summarizer.cli:main"
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["novel_summarizer*"]
-
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["novel_summarizer*", "scripts*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

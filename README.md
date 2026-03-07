@@ -152,6 +152,25 @@ uv run python -m black .       # 格式化（line length 120）
 uv run python -m ruff check .  # Lint 检查
 ```
 
+### 小脚本工具
+
+项目根目录新增了 `scripts/` 目录，用于放置独立的格式转写和维护工具，不直接耦合主业务流程。
+
+#### EPUB 转 Markdown
+
+```bash
+uv run python scripts/epub_to_markdown.py resources/超时空辉夜姬.epub
+uv run python scripts/epub_to_markdown.py resources/超时空辉夜姬.epub --output output/超时空辉夜姬_epub.md
+uv run python scripts/epub_to_markdown.py resources/超时空辉夜姬.epub --asset-policy keep-images
+uv run python scripts/epub_to_markdown.py resources/超时空辉夜姬.epub --asset-policy keep-all
+```
+
+- `text-only`（默认）：只保留文本，丢弃图片/音视频等非文本内容
+- `keep-images`：保留图片，并将图片资源导出到 `*_assets/`
+- `keep-all`：保留图片和其它非文本资源（如音频/视频），并导出到 `*_assets/`
+
+如果没有显式传 `--assets-dir`，资源会默认输出到 Markdown 同级目录下的 `<输出文件名>_assets/`。
+
 ### 说明
 
 - 当前仅支持 OpenAI 兼容 API 作为 LLM 提供方。
